@@ -19,6 +19,8 @@
 #define TESTBUFLEN	4096
 #define TESTBUFLEN_CMP	16
 
+#define TESTBUFLEN_PAGE_MAX	65536
+
 static int test_compare_eq_op(char *a, char *b, size_t len)
 {
 	struct cpu_op opvec[] = {
@@ -1047,20 +1049,21 @@ static int test_too_many_ops(void)
 	return 0;
 }
 
+/* Use 64kB len, largest page size known on Linux. */
 static int test_memcpy_single_too_large(void)
 {
 	int i, ret;
-	char buf1[TESTBUFLEN + 1];
-	char buf2[TESTBUFLEN + 1];
+	char buf1[TESTBUFLEN_PAGE_MAX + 1];
+	char buf2[TESTBUFLEN_PAGE_MAX + 1];
 	const char *test_name = "test_memcpy_single_too_large";
 
 	printf("Testing %s\n", test_name);
 
 	/* Test memcpy */
-	for (i = 0; i < TESTBUFLEN + 1; i++)
+	for (i = 0; i < TESTBUFLEN_PAGE_MAX + 1; i++)
 		buf1[i] = (char)i;
-	memset(buf2, 0, TESTBUFLEN + 1);
-	ret = test_memcpy_op(buf2, buf1, TESTBUFLEN + 1);
+	memset(buf2, 0, TESTBUFLEN_PAGE_MAX + 1);
+	ret = test_memcpy_op(buf2, buf1, TESTBUFLEN_PAGE_MAX + 1);
 	if (!ret || (ret < 0 && errno != EINVAL)) {
 		printf("%s returned with %d, errno: %s\n",
 			test_name, ret, strerror(errno));
