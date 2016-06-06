@@ -11233,6 +11233,7 @@ L:	linux-kernel@vger.kernel.org
 S:	Supported
 F:	kernel/rseq.c
 F:	include/uapi/linux/rseq.h
+F:	include/trace/events/rseq.h
 
 RFKILL
 M:	Johannes Berg <johannes@sipsolutions.net>
