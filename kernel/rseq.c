@@ -32,6 +32,9 @@
 #include <linux/types.h>
 #include <asm/ptrace.h>
 
+#define CREATE_TRACE_POINTS
+#include <trace/events/rseq.h>
+
 /*
  * The restartable sequences mechanism is the overlap of two distinct
  * restart mechanisms: a sequence counter tracking preemption and signal
@@ -139,6 +142,7 @@ static bool rseq_update_cpu_id_event_counter(struct task_struct *t,
 			t->rseq_event_counter;
 	if (__put_user(u.v, &t->rseq->u.v))
 		return false;
+	trace_rseq_update(t);
 	return true;
 }
 
@@ -230,6 +234,9 @@ static int rseq_ip_fixup(struct pt_regs *regs)
 
 	ret = rseq_get_rseq_cs(t, &start_ip, &post_commit_ip, &abort_ip,
 			&cs_flags);
+	trace_rseq_ip_fixup((void __user *)instruction_pointer(regs),
+		start_ip, post_commit_ip, abort_ip, t->rseq_event_counter,
+		ret);
 	if (!ret)
 		return -EFAULT;
 
