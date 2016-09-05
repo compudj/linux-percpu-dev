@@ -65,7 +65,8 @@ do { \
 		"1:\n\t" \
 		_setup \
 		RSEQ_INJECT_ASM(1) \
-		"movq $3b, %[rseq_cs]\n\t" \
+		"leaq 3b(%%rip), %%rax\n\t" \
+		"movq %%rax, %[rseq_cs]\n\t" \
 		RSEQ_INJECT_ASM(2) \
 		"cmpl %[start_event_counter], %[current_event_counter]\n\t" \
 		"jnz 4f\n\t" \
@@ -89,7 +90,7 @@ do { \
 		  _spec_input \
 		  _final_input \
 		  RSEQ_INJECT_INPUT \
-		: "memory", "cc" \
+		: "memory", "cc", "rax" \
 		  _extra_clobber \
 		  RSEQ_INJECT_CLOBBER \
 		: _failure \
