@@ -90,7 +90,7 @@ do { \
 		"mov r1, #0\n\t" \
 		"str r1, [%[rseq_cs]]\n\t" \
 		_teardown \
-		"ldr pc, %l[failure]\n\t" \
+		"b %l[failure]\n\t" \
 		"4:\n\t" \
 		: /* gcc asm goto does not allow outputs */ \
 		: [start_event_counter]"r"((_start_value).event_counter), \
