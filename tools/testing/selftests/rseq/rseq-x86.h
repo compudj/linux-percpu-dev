@@ -75,11 +75,9 @@ do { \
 		_final_store \
 		"2:\n\t" \
 		RSEQ_INJECT_ASM(5) \
-		"movq $0, %[rseq_cs]\n\t" \
 		_teardown \
 		".pushsection __rseq_failure, \"a\"\n\t" \
 		"4:\n\t" \
-		"movq $0, %[rseq_cs]\n\t" \
 		_teardown \
 		"jmp %l[failure]\n\t" \
 		".popsection\n\t" \
@@ -219,11 +217,9 @@ do { \
 		_final_store \
 		"2:\n\t" \
 		RSEQ_INJECT_ASM(5) \
-		"movl $0, %[rseq_cs]\n\t" \
 		_teardown \
 		".pushsection __rseq_failure, \"a\"\n\t" \
 		"4:\n\t" \
-		"movl $0, %[rseq_cs]\n\t" \
 		_teardown \
 		"jmp %l[failure]\n\t" \
 		".popsection\n\t" \
