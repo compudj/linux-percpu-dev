@@ -198,7 +198,7 @@ do {									\
 		"b 5f\n\t" \
 		"4:\n\t" \
 		"li %%r17, 0\n\t" \
-		"std %%r17, 0(%[rseq_cs])\n\t" \
+		"stw %%r17, 0(%[rseq_cs])\n\t" \
 		_teardown \
 		"b %l[failure]\n\t" \
 		"5:\n\t" \
