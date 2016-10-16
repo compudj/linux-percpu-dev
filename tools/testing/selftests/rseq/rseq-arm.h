@@ -47,11 +47,6 @@ do {									\
 /*
  * The __rseq_table section can be used by debuggers to better handle
  * single-stepping through the restartable critical sections.
- *
- * Load the immediate value 0 into register r1 right after the ldr
- * instruction to improve instruction-level parallelism: load the
- * constant while the processor is stalled waiting for the load to
- * complete, which is required by the following comparison and branch.
  */
 
 #define RSEQ_FINISH_ASM(_target_final, _to_write_final, _start_value, \
@@ -72,7 +67,6 @@ do { \
 		"str r0, [%[rseq_cs]]\n\t" \
 		RSEQ_INJECT_ASM(2) \
 		"ldr r0, %[current_event_counter]\n\t" \
-		"mov r1, #0\n\t" \
 		"cmp %[start_event_counter], r0\n\t" \
 		"bne 5f\n\t" \
 		RSEQ_INJECT_ASM(3) \
@@ -80,15 +74,12 @@ do { \
 		_final_store \
 		"2:\n\t" \
 		RSEQ_INJECT_ASM(5) \
-		"str r1, [%[rseq_cs]]\n\t" \
 		_teardown \
 		"b 4f\n\t" \
 		".balign 32\n\t" \
 		"3:\n\t" \
 		".word 1b, 0x0, 2b, 0x0, 5f, 0x0, 0x0, 0x0\n\t" \
 		"5:\n\t" \
-		"mov r1, #0\n\t" \
-		"str r1, [%[rseq_cs]]\n\t" \
 		_teardown \
 		"b %l[failure]\n\t" \
 		"4:\n\t" \
@@ -99,7 +90,7 @@ do { \
 		  _spec_input \
 		  _final_input \
 		  RSEQ_INJECT_INPUT \
-		: "r0", "r1", "memory", "cc" \
+		: "r0", "memory", "cc" \
 		  _extra_clobber \
 		  RSEQ_INJECT_CLOBBER \
 		: _failure \
