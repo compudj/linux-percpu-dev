@@ -160,6 +160,17 @@ static bool rseq_get_rseq_cs(struct task_struct *t,
 	urseq_cs = (struct rseq_cs __user *)ptr;
 	if (copy_from_user(&rseq_cs, urseq_cs, sizeof(rseq_cs)))
 		return false;
+	/*
+	 * We need to clear rseq_cs upon entry into a signal handler
+	 * nested on top of a rseq assembly block, so the signal handler
+	 * will not be fixed up if itself interrupted by a nested signal
+	 * handler or preempted.  We also need to clear rseq_cs if we
+	 * preempt or deliver a signal on top of code outside of the
+	 * rseq assembly block, to ensure that a following preemption or
+	 * signal delivery will not try to perform a fixup needlessly.
+	 */
+	if (clear_user(&t->rseq->rseq_cs, sizeof(t->rseq->rseq_cs)))
+		return false;
 	*start_ip = (void __user *)rseq_cs.start_ip;
 	*post_commit_ip = (void __user *)rseq_cs.post_commit_ip;
 	*abort_ip = (void __user *)rseq_cs.abort_ip;
@@ -185,15 +196,6 @@ static bool rseq_ip_fixup(struct pt_regs *regs)
 	if ((void __user *)instruction_pointer(regs) >= post_commit_ip ||
 			(void __user *)instruction_pointer(regs) < start_ip)
 		return true;
-
-	/*
-	 * We need to clear rseq_cs upon entry into a signal
-	 * handler nested on top of a rseq assembly block, so
-	 * the signal handler will not be fixed up if itself
-	 * interrupted by a nested signal handler or preempted.
-	 */
-	if (clear_user(&t->rseq->rseq_cs, sizeof(t->rseq->rseq_cs)))
-		return false;
 
 	/*
 	 * We set this after potentially failing in
