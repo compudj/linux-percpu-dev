@@ -45,10 +45,10 @@ void test_critical_section(void)
 	struct rseq_state start;
 	uint32_t event_counter;
 
-	start = rseq_start(&rseq_lock);
+	start = rseq_start_rlock(&rseq_lock);
 	event_counter = start.event_counter;
 	do {
-		start = rseq_start(&rseq_lock);
+		start = rseq_start_rlock(&rseq_lock);
 	} while (start.event_counter == event_counter);
 }
 
@@ -56,7 +56,7 @@ void test_signal_interrupt_handler(int signo)
 {
 	struct rseq_state current;
 
-	current = rseq_start(&rseq_lock);
+	current = rseq_start_rlock(&rseq_lock);
 	/*
 	 * The potential critical section bordered by 'start' must be
 	 * invalid.
@@ -73,7 +73,7 @@ void test_signal_interrupts(void)
 	signal(SIGPROF, test_signal_interrupt_handler);
 
 	do {
-		sigtest_start = rseq_start(&rseq_lock);
+		sigtest_start = rseq_start_rlock(&rseq_lock);
 	} while (signals_delivered < 10);
 	setitimer(ITIMER_PROF, NULL, NULL);
 }

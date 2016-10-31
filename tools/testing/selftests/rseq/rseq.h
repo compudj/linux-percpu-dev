@@ -170,7 +170,7 @@ static inline int32_t rseq_current_cpu(void)
 }
 
 static inline __attribute__((always_inline))
-struct rseq_state rseq_start(struct rseq_lock *rlock)
+struct rseq_state rseq_start(void)
 {
 	struct rseq_state result;
 
@@ -188,6 +188,21 @@ struct rseq_state rseq_start(struct rseq_lock *rlock)
 		RSEQ_INJECT_C(6)
 		result.cpu_id = ACCESS_ONCE(result.rseqp->u.e.cpu_id);
 	}
+	RSEQ_INJECT_C(7)
+	/*
+	 * Ensure the compiler does not re-order loads of protected
+	 * values before we load the event counter.
+	 */
+	barrier();
+	return result;
+}
+
+static inline __attribute__((always_inline))
+struct rseq_state rseq_start_rlock(struct rseq_lock *rlock)
+{
+	struct rseq_state result;
+
+	result = rseq_start();
 	/*
 	 * Read event counter before lock state and cpu_id. This ensures
 	 * that when the state changes from RESTART to LOCK, if we have
@@ -197,7 +212,6 @@ struct rseq_state rseq_start(struct rseq_lock *rlock)
 	 * preemption/signalling will cause them to restart, so they
 	 * don't interfere with the lock.
 	 */
-	RSEQ_INJECT_C(7)
 
 	if (!has_fast_acquire_release() && likely(rseq_has_sys_membarrier)) {
 		result.lock_state = ACCESS_ONCE(rlock->state);
@@ -211,11 +225,6 @@ struct rseq_state rseq_start(struct rseq_lock *rlock)
 	}
 	if (unlikely(result.cpu_id < 0))
 		rseq_fallback_noinit(&result);
-	/*
-	 * Ensure the compiler does not re-order loads of protected
-	 * values before we load the event counter.
-	 */
-	barrier();
 	return result;
 }
 
@@ -234,8 +243,7 @@ enum rseq_finish_type {
  * write takes place, the rseq_finish2 is guaranteed to succeed.
  */
 static inline __attribute__((always_inline))
-bool __rseq_finish(struct rseq_lock *rlock,
-		intptr_t *p_spec, intptr_t to_write_spec,
+bool __rseq_finish(intptr_t *p_spec, intptr_t to_write_spec,
 		void *p_memcpy, void *to_write_memcpy, size_t len_memcpy,
 		intptr_t *p_final, intptr_t to_write_final,
 		struct rseq_state start_value,
@@ -243,11 +251,6 @@ bool __rseq_finish(struct rseq_lock *rlock,
 {
 	RSEQ_INJECT_C(9)
 
-	if (unlikely(start_value.lock_state != RSEQ_LOCK_STATE_RESTART)) {
-		if (start_value.lock_state == RSEQ_LOCK_STATE_LOCK)
-			rseq_fallback_wait(rlock);
-		return false;
-	}
 	switch (type) {
 	case RSEQ_FINISH_SINGLE:
 		RSEQ_FINISH_ASM(p_final, to_write_final, start_value, failure,
@@ -312,59 +315,73 @@ failure:
 }
 
 static inline __attribute__((always_inline))
-bool rseq_finish(struct rseq_lock *rlock,
-		intptr_t *p, intptr_t to_write,
+bool rseq_finish_rlock(struct rseq_lock *rlock,
+		intptr_t *p_spec, intptr_t to_write_spec,
+		void *p_memcpy, void *to_write_memcpy, size_t len_memcpy,
+		intptr_t *p_final, intptr_t to_write_final,
+		struct rseq_state start_value,
+		enum rseq_finish_type type, bool release)
+{
+	if (unlikely(start_value.lock_state != RSEQ_LOCK_STATE_RESTART)) {
+		if (start_value.lock_state == RSEQ_LOCK_STATE_LOCK)
+			rseq_fallback_wait(rlock);
+		return false;
+	}
+	return __rseq_finish(p_spec, to_write_spec, p_memcpy,
+		to_write_memcpy, len_memcpy,
+		p_final, to_write_final,
+		start_value, type, release);
+}
+
+static inline __attribute__((always_inline))
+bool rseq_finish(intptr_t *p, intptr_t to_write,
 		struct rseq_state start_value)
 {
-	return __rseq_finish(rlock, NULL, 0,
+	return __rseq_finish(NULL, 0,
 			NULL, NULL, 0,
 			p, to_write, start_value,
 			RSEQ_FINISH_SINGLE, false);
 }
 
 static inline __attribute__((always_inline))
-bool rseq_finish2(struct rseq_lock *rlock,
-		intptr_t *p_spec, intptr_t to_write_spec,
+bool rseq_finish2(intptr_t *p_spec, intptr_t to_write_spec,
 		intptr_t *p_final, intptr_t to_write_final,
 		struct rseq_state start_value)
 {
-	return __rseq_finish(rlock, p_spec, to_write_spec,
+	return __rseq_finish(p_spec, to_write_spec,
 			NULL, NULL, 0,
 			p_final, to_write_final, start_value,
 			RSEQ_FINISH_TWO, false);
 }
 
 static inline __attribute__((always_inline))
-bool rseq_finish2_release(struct rseq_lock *rlock,
-		intptr_t *p_spec, intptr_t to_write_spec,
+bool rseq_finish2_release(intptr_t *p_spec, intptr_t to_write_spec,
 		intptr_t *p_final, intptr_t to_write_final,
 		struct rseq_state start_value)
 {
-	return __rseq_finish(rlock, p_spec, to_write_spec,
+	return __rseq_finish(p_spec, to_write_spec,
 			NULL, NULL, 0,
 			p_final, to_write_final, start_value,
 			RSEQ_FINISH_TWO, true);
 }
 
 static inline __attribute__((always_inline))
-bool rseq_finish_memcpy(struct rseq_lock *rlock,
-		void *p_memcpy, void *to_write_memcpy, size_t len_memcpy,
-		intptr_t *p_final, intptr_t to_write_final,
+bool rseq_finish_memcpy(void *p_memcpy, void *to_write_memcpy,
+		size_t len_memcpy, intptr_t *p_final, intptr_t to_write_final,
 		struct rseq_state start_value)
 {
-	return __rseq_finish(rlock, NULL, 0,
+	return __rseq_finish(NULL, 0,
 			p_memcpy, to_write_memcpy, len_memcpy,
 			p_final, to_write_final, start_value,
 			RSEQ_FINISH_MEMCPY, false);
 }
 
 static inline __attribute__((always_inline))
-bool rseq_finish_memcpy_release(struct rseq_lock *rlock,
-		void *p_memcpy, void *to_write_memcpy, size_t len_memcpy,
-		intptr_t *p_final, intptr_t to_write_final,
+bool rseq_finish_memcpy_release(void *p_memcpy, void *to_write_memcpy,
+		size_t len_memcpy, intptr_t *p_final, intptr_t to_write_final,
 		struct rseq_state start_value)
 {
-	return __rseq_finish(rlock, NULL, 0,
+	return __rseq_finish(NULL, 0,
 			p_memcpy, to_write_memcpy, len_memcpy,
 			p_final, to_write_final, start_value,
 			RSEQ_FINISH_MEMCPY, true);
@@ -402,25 +419,25 @@ bool rseq_finish_memcpy_release(struct rseq_lock *rlock,
 		_dest_memcpy, _src_memcpy, _len_memcpy,			\
 		_targetptr_final, _newval_final, _code, _release)	\
 	do {								\
-		_rseq_state = rseq_start(_lock);			\
+		_rseq_state = rseq_start_rlock(_lock);			\
 		_cpu = rseq_cpu_at_start(_rseq_state);			\
 		_result = true;						\
 		_code							\
 		if (unlikely(!_result))					\
 			break;						\
-		if (likely(__rseq_finish(_lock,				\
+		if (likely(rseq_finish_rlock(_lock,			\
 				_targetptr_spec, _newval_spec,		\
 				_dest_memcpy, _src_memcpy, _len_memcpy,	\
 				_targetptr_final, _newval_final,	\
 				_rseq_state, _type, _release)))		\
 			break;						\
-		_rseq_state = rseq_start(_lock);			\
+		_rseq_state = rseq_start_rlock(_lock);			\
 		_cpu = rseq_cpu_at_start(_rseq_state);			\
 		_result = true;						\
 		_code							\
 		if (unlikely(!_result))					\
 			break;						\
-		if (likely(__rseq_finish(_lock,				\
+		if (likely(rseq_finish_rlock(_lock,			\
 				_targetptr_spec, _newval_spec,		\
 				_dest_memcpy, _src_memcpy, _len_memcpy,	\
 				_targetptr_final, _newval_final,	\
