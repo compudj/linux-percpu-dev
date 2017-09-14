@@ -84,7 +84,7 @@ union rseq_cpu_event {
 };
 
 enum rseq_flags {
-	RSEQ_DISABLE	= (1U << 0),
+	RSEQ_FLAG_DISABLE	= (1U << 0),
 };
 
 /*

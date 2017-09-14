@@ -132,6 +132,18 @@
  * expected to perform two 32-bit single-copy stores to guarantee
  * single-copy atomicity semantics for other threads.
  */
+static int rseq_check_disable(struct task_struct *t)
+{
+	uint32_t flags;
+
+	if (__get_user(flags, &t->rseq->flags)) {
+		return -EFAULT;
+	}
+	if (flags & RSEQ_FLAG_DISABLE)
+		return 1;
+	return 0;
+}
+
 static bool rseq_update_cpu_id_event_counter(struct task_struct *t)
 {
 	union rseq_cpu_event u;
@@ -221,15 +233,22 @@ static bool rseq_ip_fixup(struct pt_regs *regs)
 void __rseq_handle_notify_resume(struct pt_regs *regs)
 {
 	struct task_struct *t = current;
+	int ret;
 
 	if (unlikely(t->flags & PF_EXITING))
 		return;
 	if (!access_ok(VERIFY_WRITE, t->rseq, sizeof(*t->rseq)))
 		goto error;
+	ret = rseq_check_disable(t);
+	if (ret < 0)
+		goto error;
+	if (ret)
+		goto disabled;
 	if (!rseq_update_cpu_id_event_counter(t))
 		goto error;
 	if (!rseq_ip_fixup(regs))
 		goto error;
+disabled:
 	return;
 
 error:
