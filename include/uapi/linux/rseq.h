@@ -83,8 +83,12 @@ union rseq_cpu_event {
 	uint64_t v;
 };
 
+enum rseq_flags {
+	RSEQ_DISABLE	= (1U << 0),
+};
+
 /*
- * struct rseq is aligned on 2 * 8 bytes to ensure it is always
+ * struct rseq is aligned on 4 * 8 bytes to ensure it is always
  * contained within a single cache-line.
  */
 struct rseq {
@@ -101,6 +105,16 @@ struct rseq {
 	 * 64-bit.
 	 */
 	RSEQ_FIELD_u32_u64(rseq_cs);
-} __attribute__((aligned(2 * sizeof(uint64_t))));
+	/*
+	 * - RSEQ_DISABLE flag:
+	 *
+	 * Fallback fast-track flag for single-stepping.
+	 * Set by user-space if lack of progress is detected.
+	 * Cleared by user-space after rseq finish.
+	 * Read by the kernel. When set, event counter update and
+	 * instruction pointer restart are inhibited for this thread.
+	 */
+	uint32_t flags;
+} __attribute__((aligned(4 * sizeof(uint64_t))));
 
 #endif /* _UAPI_LINUX_RSEQ_H */
