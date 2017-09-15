@@ -84,7 +84,8 @@ union rseq_cpu_event {
 };
 
 enum rseq_thread_flags {
-	RSEQ_THREAD_FLAG_DISABLE	= (1U << 0),
+	RSEQ_THREAD_FLAG_NO_RESTART_ON_PREEMPT_SIGNAL	= (1U << 0),
+	RSEQ_THREAD_FLAG_NO_RESTART_ON_MIGRATE		= (1U << 1),
 };
 
 /*
@@ -111,8 +112,16 @@ struct rseq {
 	 * Fallback fast-track flag for single-stepping.
 	 * Set by user-space if lack of progress is detected.
 	 * Cleared by user-space after rseq finish.
-	 * Read by the kernel. When set, event counter update and
-	 * instruction pointer restart are inhibited for this thread.
+	 * Read by the kernel.
+	 * - RSEQ_THREAD_FLAG_NO_RESTART_ON_PREEMPT
+	 *     Inhibit instruction sequence block restart on preemption
+	 *     for this thread.
+	 * - RSEQ_THREAD_FLAG_NO_RESTART_ON_SIGNAL
+	 *     Inhibit instruction sequence block restart on signal
+	 *     delivery for this thread.
+	 * - RSEQ_THREAD_FLAG_NO_RESTART_ON_MIGRATE
+	 *     Inhibit instruction sequence block restart on migration
+	 *     for this thread.
 	 */
 	uint32_t flags;
 } __attribute__((aligned(4 * sizeof(uint64_t))));

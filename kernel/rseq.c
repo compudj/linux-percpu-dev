@@ -149,7 +149,7 @@ static bool rseq_update_cpu_id_event_counter(struct task_struct *t)
 	union rseq_cpu_event u;
 
 	u.e.cpu_id = raw_smp_processor_id();
-	u.e.event_counter = ++t->rseq_event_counter;
+	u.e.event_counter = t->event_counter++;
 	if (__put_user(u.v, &t->rseq->u.v))
 		return false;
 	trace_rseq_update(t);
@@ -196,7 +196,18 @@ static bool rseq_ip_fixup(struct pt_regs *regs)
 	void __user *post_commit_ip = NULL;
 	void __user *abort_ip = NULL;
 	bool ret;
+	uint32_t flags;
 
+	if (__get_user(flags, &t->rseq->flags))
+		return false;
+	if (t->rseq_migrate) {
+		t->rseq_migrate = false;
+		if (flags & RSEQ_THREAD_FLAG_NO_RESTART_ON_MIGRATE)
+			return true;
+	} else {
+		if (flags & RSEQ_THREAD_FLAG_NO_RESTART_ON_PREEMPT_SIGNAL)
+			return true;
+	}
 	ret = rseq_get_rseq_cs(t, &start_ip, &post_commit_ip, &abort_ip);
 	trace_rseq_ip_fixup((void __user *)instruction_pointer(regs),
 		start_ip, post_commit_ip, abort_ip, t->rseq_event_counter,
@@ -233,17 +244,11 @@ static bool rseq_ip_fixup(struct pt_regs *regs)
 void __rseq_handle_notify_resume(struct pt_regs *regs)
 {
 	struct task_struct *t = current;
-	int ret;
 
 	if (unlikely(t->flags & PF_EXITING))
 		return;
 	if (!access_ok(VERIFY_WRITE, t->rseq, sizeof(*t->rseq)))
 		goto error;
-	ret = rseq_check_disable(t);
-	if (ret < 0)
-		goto error;
-	if (ret)
-		goto disabled;
 	if (!rseq_update_cpu_id_event_counter(t))
 		goto error;
 	if (!rseq_ip_fixup(regs))

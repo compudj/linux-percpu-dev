@@ -960,6 +960,7 @@ struct task_struct {
 	struct rseq __user *rseq;
 	u32 rseq_event_counter;
 	unsigned int rseq_refcount;
+	bool rseq_preempt, rseq_signal, rseq_migrate;
 #endif
 
 	/*
@@ -1676,7 +1677,16 @@ static inline void rseq_sched_out(struct task_struct *t)
 }
 static inline void rseq_signal_deliver(struct pt_regs *regs)
 {
+	t->rseq_signal = true;
 	rseq_handle_notify_resume(regs);
+}
+static inline void rseq_preempt(struct task_struct *t)
+{
+	t->rseq_preempt = true;
+}
+static inline void rseq_migrate(struct task_struct *t)
+{
+	t->rseq_migrate = true;
 }
 #else
 static inline void rseq_set_notify_resume(struct task_struct *t)
@@ -1695,6 +1705,12 @@ static inline void rseq_sched_out(struct task_struct *t)
 {
 }
 static inline void rseq_signal_deliver(struct pt_regs *regs)
+{
+}
+static inline void rseq_preempt(struct task_struct *t)
+{
+}
+static inline void rseq_migrate(struct task_struct *t)
 {
 }
 #endif
