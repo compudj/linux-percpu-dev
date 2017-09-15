@@ -83,8 +83,8 @@ union rseq_cpu_event {
 	uint64_t v;
 };
 
-enum rseq_flags {
-	RSEQ_FLAG_DISABLE	= (1U << 0),
+enum rseq_thread_flags {
+	RSEQ_THREAD_FLAG_DISABLE	= (1U << 0),
 };
 
 /*
