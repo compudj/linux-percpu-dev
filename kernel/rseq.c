@@ -213,6 +213,18 @@ static int rseq_need_restart(struct task_struct *t)
 
 	if (__get_user(flags, &t->rseq->flags))
 		return -EFAULT;
+	/*
+	 * Restart on signal can only be inhibited when restart on
+	 * preempt and restart on migrate are inhibited too. Otherwise,
+	 * a preempted signal handler could fail to restart the prior
+	 * execution context on sigreturn.
+	 */
+	if (flags & RSEQ_THREAD_FLAG_NO_RESTART_ON_SIGNAL) {
+		if (!(flags & RSEQ_THREAD_FLAG_NO_RESTART_ON_MIGRATE))
+			return -EINVAL;
+		if (!(flags & RSEQ_THREAD_FLAG_NO_RESTART_ON_PREEMPT))
+			return -EINVAL;
+	}
 	if (t->rseq_migrate
 			&& !(flags & RSEQ_THREAD_FLAG_NO_RESTART_ON_MIGRATE))
 		need_fixup = true;
