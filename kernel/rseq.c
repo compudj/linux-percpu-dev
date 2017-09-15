@@ -132,18 +132,6 @@
  * expected to perform two 32-bit single-copy stores to guarantee
  * single-copy atomicity semantics for other threads.
  */
-static int rseq_check_disable(struct task_struct *t)
-{
-	uint32_t flags;
-
-	if (__get_user(flags, &t->rseq->flags)) {
-		return -EFAULT;
-	}
-	if (flags & RSEQ_FLAG_DISABLE)
-		return 1;
-	return 0;
-}
-
 static bool rseq_update_cpu_id_event_counter(struct task_struct *t)
 {
 	union rseq_cpu_event u;
@@ -195,19 +183,25 @@ static bool rseq_ip_fixup(struct pt_regs *regs)
 	void __user *start_ip = NULL;
 	void __user *post_commit_ip = NULL;
 	void __user *abort_ip = NULL;
-	bool ret;
+	bool ret, need_fixup = false;
 	uint32_t flags;
 
 	if (__get_user(flags, &t->rseq->flags))
 		return false;
-	if (t->rseq_migrate) {
-		t->rseq_migrate = false;
-		if (flags & RSEQ_THREAD_FLAG_NO_RESTART_ON_MIGRATE)
-			return true;
-	} else {
-		if (flags & RSEQ_THREAD_FLAG_NO_RESTART_ON_PREEMPT_SIGNAL)
-			return true;
-	}
+	if (t->rseq_migrate
+			&& !(flags & RSEQ_THREAD_FLAG_NO_RESTART_ON_MIGRATE))
+		need_fixup = true;
+	else if (t->rseq_preempt
+			&& !(flags & RSEQ_THREAD_FLAG_NO_RESTART_ON_PREEMPT))
+		need_fixup = true;
+	else if (t->rseq_signal
+			&& !(flags & RSEQ_THREAD_FLAG_NO_RESTART_ON_SIGNAL))
+		need_fixup = true;
+	t->rseq_preempt = false;
+	t->rseq_signal = false;
+	t->rseq_migrate = false;
+	if (!need_fixup)
+		return true;
 	ret = rseq_get_rseq_cs(t, &start_ip, &post_commit_ip, &abort_ip);
 	trace_rseq_ip_fixup((void __user *)instruction_pointer(regs),
 		start_ip, post_commit_ip, abort_ip, t->rseq_event_counter,
