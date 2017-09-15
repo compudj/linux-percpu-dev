@@ -183,25 +183,8 @@ static bool rseq_ip_fixup(struct pt_regs *regs)
 	void __user *start_ip = NULL;
 	void __user *post_commit_ip = NULL;
 	void __user *abort_ip = NULL;
-	bool ret, need_fixup = false;
-	uint32_t flags;
+	bool ret;
 
-	if (__get_user(flags, &t->rseq->flags))
-		return false;
-	if (t->rseq_migrate
-			&& !(flags & RSEQ_THREAD_FLAG_NO_RESTART_ON_MIGRATE))
-		need_fixup = true;
-	else if (t->rseq_preempt
-			&& !(flags & RSEQ_THREAD_FLAG_NO_RESTART_ON_PREEMPT))
-		need_fixup = true;
-	else if (t->rseq_signal
-			&& !(flags & RSEQ_THREAD_FLAG_NO_RESTART_ON_SIGNAL))
-		need_fixup = true;
-	t->rseq_preempt = false;
-	t->rseq_signal = false;
-	t->rseq_migrate = false;
-	if (!need_fixup)
-		return true;
 	ret = rseq_get_rseq_cs(t, &start_ip, &post_commit_ip, &abort_ip);
 	trace_rseq_ip_fixup((void __user *)instruction_pointer(regs),
 		start_ip, post_commit_ip, abort_ip, t->rseq_event_counter,
@@ -223,6 +206,30 @@ static bool rseq_ip_fixup(struct pt_regs *regs)
 	return true;
 }
 
+static int rseq_need_restart(struct task_struct *t)
+{
+	bool need_fixup = false;
+	uint32_t flags;
+
+	if (__get_user(flags, &t->rseq->flags))
+		return -EFAULT;
+	if (t->rseq_migrate
+			&& !(flags & RSEQ_THREAD_FLAG_NO_RESTART_ON_MIGRATE))
+		need_fixup = true;
+	else if (t->rseq_preempt
+			&& !(flags & RSEQ_THREAD_FLAG_NO_RESTART_ON_PREEMPT))
+		need_fixup = true;
+	else if (t->rseq_signal
+			&& !(flags & RSEQ_THREAD_FLAG_NO_RESTART_ON_SIGNAL))
+		need_fixup = true;
+	t->rseq_preempt = false;
+	t->rseq_signal = false;
+	t->rseq_migrate = false;
+	if (need_fixup)
+		return 1;
+	return 0;
+}
+
 /*
  * This resume handler should always be executed between any of:
  * - preemption,
@@ -238,16 +245,21 @@ static bool rseq_ip_fixup(struct pt_regs *regs)
 void __rseq_handle_notify_resume(struct pt_regs *regs)
 {
 	struct task_struct *t = current;
+	int ret;
 
 	if (unlikely(t->flags & PF_EXITING))
 		return;
 	if (!access_ok(VERIFY_WRITE, t->rseq, sizeof(*t->rseq)))
 		goto error;
-	if (!rseq_update_cpu_id_event_counter(t))
+	ret = rseq_need_restart(t);
+	if (ret < 0)
 		goto error;
-	if (!rseq_ip_fixup(regs))
-		goto error;
-disabled:
+	if (ret) {
+		if (!rseq_update_cpu_id_event_counter(t))
+			goto error;
+		if (!rseq_ip_fixup(regs))
+			goto error;
+	}
 	return;
 
 error:

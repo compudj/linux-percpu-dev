@@ -115,14 +115,14 @@ struct rseq {
 	 * Cleared by user-space after rseq finish.
 	 * Read by the kernel.
 	 * - RSEQ_THREAD_FLAG_NO_RESTART_ON_PREEMPT
-	 *     Inhibit instruction sequence block restart on preemption
-	 *     for this thread.
+	 *     Inhibit instruction sequence block restart and event
+	 *     counter increment on preemption for this thread.
 	 * - RSEQ_THREAD_FLAG_NO_RESTART_ON_SIGNAL
-	 *     Inhibit instruction sequence block restart on signal
-	 *     delivery for this thread.
+	 *     Inhibit instruction sequence block restart and event
+	 *     counter increment on signal delivery for this thread.
 	 * - RSEQ_THREAD_FLAG_NO_RESTART_ON_MIGRATE
-	 *     Inhibit instruction sequence block restart on migration
-	 *     for this thread.
+	 *     Inhibit instruction sequence block restart and event
+	 *     counter increment on migration for this thread.
 	 */
 	uint32_t flags;
 } __attribute__((aligned(4 * sizeof(uint64_t))));
