@@ -1677,7 +1677,7 @@ static inline void rseq_sched_out(struct task_struct *t)
 }
 static inline void rseq_signal_deliver(struct pt_regs *regs)
 {
-	t->rseq_signal = true;
+	current->rseq_signal = true;
 	rseq_handle_notify_resume(regs);
 }
 static inline void rseq_preempt(struct task_struct *t)
