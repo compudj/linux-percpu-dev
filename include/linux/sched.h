@@ -3782,4 +3782,30 @@ void cpufreq_add_update_util_hook(int cpu, struct update_util_data *data,
 void cpufreq_remove_update_util_hook(int cpu);
 #endif /* CONFIG_CPU_FREQ */
 
+#ifdef CONFIG_MEMBARRIER
+enum {
+	MEMBARRIER_STATE_PRIVATE_EXPEDITED_READY	= (1U << 0),
+	MEMBARRIER_STATE_PRIVATE_EXPEDITED		= (1U << 1),
+};
+
+#ifdef CONFIG_ARCH_HAS_MEMBARRIER_HOOKS
+#include <asm/membarrier.h>
+#endif
+
+static inline void membarrier_execve(struct task_struct *t)
+{
+	atomic_set(&t->mm->membarrier_state, 0);
+}
+#else
+#ifdef CONFIG_ARCH_HAS_MEMBARRIER_HOOKS
+static inline void membarrier_arch_switch_mm(struct mm_struct *prev,
+		struct mm_struct *next, struct task_struct *tsk)
+{
+}
+#endif
+static inline void membarrier_execve(struct task_struct *t)
+{
+}
+#endif
+
 #endif
