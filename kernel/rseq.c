@@ -219,20 +219,20 @@ static int rseq_need_restart(struct task_struct *t)
 	 * a preempted signal handler could fail to restart the prior
 	 * execution context on sigreturn.
 	 */
-	if (flags & RSEQ_THREAD_FLAG_NO_RESTART_ON_SIGNAL) {
-		if (!(flags & RSEQ_THREAD_FLAG_NO_RESTART_ON_MIGRATE))
+	if (flags & RSEQ_CS_FLAG_NO_RESTART_ON_SIGNAL) {
+		if (!(flags & RSEQ_CS_FLAG_NO_RESTART_ON_MIGRATE))
 			return -EINVAL;
-		if (!(flags & RSEQ_THREAD_FLAG_NO_RESTART_ON_PREEMPT))
+		if (!(flags & RSEQ_CS_FLAG_NO_RESTART_ON_PREEMPT))
 			return -EINVAL;
 	}
 	if (t->rseq_migrate
-			&& !(flags & RSEQ_THREAD_FLAG_NO_RESTART_ON_MIGRATE))
+			&& !(flags & RSEQ_CS_FLAG_NO_RESTART_ON_MIGRATE))
 		need_fixup = true;
 	else if (t->rseq_preempt
-			&& !(flags & RSEQ_THREAD_FLAG_NO_RESTART_ON_PREEMPT))
+			&& !(flags & RSEQ_CS_FLAG_NO_RESTART_ON_PREEMPT))
 		need_fixup = true;
 	else if (t->rseq_signal
-			&& !(flags & RSEQ_THREAD_FLAG_NO_RESTART_ON_SIGNAL))
+			&& !(flags & RSEQ_CS_FLAG_NO_RESTART_ON_SIGNAL))
 		need_fixup = true;
 	t->rseq_preempt = false;
 	t->rseq_signal = false;

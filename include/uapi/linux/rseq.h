@@ -48,6 +48,12 @@ enum rseq_flags {
 	RSEQ_FORCE_UNREGISTER = (1 << 0),
 };
 
+enum rseq_cs_flags {
+	RSEQ_CS_FLAG_NO_RESTART_ON_PREEMPT	= (1U << 0),
+	RSEQ_CS_FLAG_NO_RESTART_ON_SIGNAL	= (1U << 1),
+	RSEQ_CS_FLAG_NO_RESTART_ON_MIGRATE	= (1U << 2),
+};
+
 /*
  * struct rseq_cs is aligned on 4 * 8 bytes to ensure it is always
  * contained within a single cache-line. It is usually declared as
@@ -57,6 +63,7 @@ struct rseq_cs {
 	RSEQ_FIELD_u32_u64(start_ip);
 	RSEQ_FIELD_u32_u64(post_commit_ip);
 	RSEQ_FIELD_u32_u64(abort_ip);
+	uint32_t flags;
 } __attribute__((aligned(4 * sizeof(uint64_t))));
 
 union rseq_cpu_event {
@@ -81,12 +88,6 @@ union rseq_cpu_event {
 	 * semantics.
 	 */
 	uint64_t v;
-};
-
-enum rseq_thread_flags {
-	RSEQ_THREAD_FLAG_NO_RESTART_ON_PREEMPT	= (1U << 0),
-	RSEQ_THREAD_FLAG_NO_RESTART_ON_SIGNAL	= (1U << 1),
-	RSEQ_THREAD_FLAG_NO_RESTART_ON_MIGRATE	= (1U << 2),
 };
 
 /*
@@ -114,13 +115,13 @@ struct rseq {
 	 * Set by user-space if lack of progress is detected.
 	 * Cleared by user-space after rseq finish.
 	 * Read by the kernel.
-	 * - RSEQ_THREAD_FLAG_NO_RESTART_ON_PREEMPT
+	 * - RSEQ_CS_FLAG_NO_RESTART_ON_PREEMPT
 	 *     Inhibit instruction sequence block restart and event
 	 *     counter increment on preemption for this thread.
-	 * - RSEQ_THREAD_FLAG_NO_RESTART_ON_SIGNAL
+	 * - RSEQ_CS_FLAG_NO_RESTART_ON_SIGNAL
 	 *     Inhibit instruction sequence block restart and event
 	 *     counter increment on signal delivery for this thread.
-	 * - RSEQ_THREAD_FLAG_NO_RESTART_ON_MIGRATE
+	 * - RSEQ_CS_FLAG_NO_RESTART_ON_MIGRATE
 	 *     Inhibit instruction sequence block restart and event
 	 *     counter increment on migration for this thread.
 	 */
