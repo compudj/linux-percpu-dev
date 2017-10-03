@@ -138,7 +138,7 @@ static bool rseq_update_cpu_id_event_counter(struct task_struct *t,
 	union rseq_cpu_event u;
 
 	u.e.cpu_id = raw_smp_processor_id();
-	u.e.event_counter = inc_event_counter ? t->rseq_event_counter++ :
+	u.e.event_counter = inc_event_counter ? ++t->rseq_event_counter :
 			t->rseq_event_counter;
 	if (__put_user(u.v, &t->rseq->u.v))
 		return false;
@@ -214,6 +214,7 @@ static int rseq_need_restart(struct task_struct *t, uint32_t cs_flags)
 	else if (t->rseq_signal
 			&& !(flags & RSEQ_CS_FLAG_NO_RESTART_ON_SIGNAL))
 		need_restart = true;
+
 	t->rseq_preempt = false;
 	t->rseq_signal = false;
 	t->rseq_migrate = false;
