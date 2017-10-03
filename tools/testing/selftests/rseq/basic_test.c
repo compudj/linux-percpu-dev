@@ -68,6 +68,7 @@ void test_signal_interrupt_handler(int signo)
 void test_signal_interrupts(void)
 {
 	struct itimerval it = { { 0, 1 }, { 0, 1 } };
+	struct itimerval stop_it = { { 0, 0 }, { 0, 0 } };
 
 	setitimer(ITIMER_PROF, &it, NULL);
 	signal(SIGPROF, test_signal_interrupt_handler);
@@ -75,7 +76,7 @@ void test_signal_interrupts(void)
 	do {
 		sigtest_start = rseq_start_rlock(&rseq_lock);
 	} while (signals_delivered < 10);
-	setitimer(ITIMER_PROF, NULL, NULL);
+	setitimer(ITIMER_PROF, &stop_it, NULL);
 }
 
 int main(int argc, char **argv)
