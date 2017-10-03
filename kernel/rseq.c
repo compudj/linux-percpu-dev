@@ -132,12 +132,14 @@
  * expected to perform two 32-bit single-copy stores to guarantee
  * single-copy atomicity semantics for other threads.
  */
-static bool rseq_update_cpu_id_event_counter(struct task_struct *t)
+static bool rseq_update_cpu_id_event_counter(struct task_struct *t,
+		bool inc_event_counter)
 {
 	union rseq_cpu_event u;
 
 	u.e.cpu_id = raw_smp_processor_id();
-	u.e.event_counter = t->event_counter++;
+	u.e.event_counter = inc_event_counter ? t->event_counter++ :
+			t->event_counter;
 	if (__put_user(u.v, &t->rseq->u.v))
 		return false;
 	trace_rseq_update(t);
@@ -177,42 +179,18 @@ static bool rseq_get_rseq_cs(struct task_struct *t,
 	return true;
 }
 
-static bool rseq_ip_fixup(struct pt_regs *regs)
+static int rseq_need_restart(struct task_struct *t, uint32_t cs_flags)
 {
-	struct task_struct *t = current;
-	void __user *start_ip = NULL;
-	void __user *post_commit_ip = NULL;
-	void __user *abort_ip = NULL;
-	bool ret;
-
-	ret = rseq_get_rseq_cs(t, &start_ip, &post_commit_ip, &abort_ip);
-	trace_rseq_ip_fixup((void __user *)instruction_pointer(regs),
-		start_ip, post_commit_ip, abort_ip, t->rseq_event_counter,
-		ret);
-	if (!ret)
-		return false;
-
-	/* Handle potentially not being within a critical section. */
-	if ((void __user *)instruction_pointer(regs) >= post_commit_ip ||
-			(void __user *)instruction_pointer(regs) < start_ip)
-		return true;
-
-	/*
-	 * We set this after potentially failing in
-	 * clear_user so that the signal arrives at the
-	 * faulting rip.
-	 */
-	instruction_pointer_set(regs, (unsigned long)abort_ip);
-	return true;
-}
-
-static int rseq_need_restart(struct task_struct *t)
-{
-	bool need_fixup = false;
+	bool need_restart = false;
 	uint32_t flags;
 
+	/* Get thread flags. */
 	if (__get_user(flags, &t->rseq->flags))
 		return -EFAULT;
+
+	/* Take into account critical section flags. */
+	flags |= cs_flags;
+
 	/*
 	 * Restart on signal can only be inhibited when restart on
 	 * preempt and restart on migrate are inhibited too. Otherwise,
@@ -227,19 +205,56 @@ static int rseq_need_restart(struct task_struct *t)
 	}
 	if (t->rseq_migrate
 			&& !(flags & RSEQ_CS_FLAG_NO_RESTART_ON_MIGRATE))
-		need_fixup = true;
+		need_restart = true;
 	else if (t->rseq_preempt
 			&& !(flags & RSEQ_CS_FLAG_NO_RESTART_ON_PREEMPT))
-		need_fixup = true;
+		need_restart = true;
 	else if (t->rseq_signal
 			&& !(flags & RSEQ_CS_FLAG_NO_RESTART_ON_SIGNAL))
-		need_fixup = true;
+		need_restart = true;
 	t->rseq_preempt = false;
 	t->rseq_signal = false;
 	t->rseq_migrate = false;
-	if (need_fixup)
+	if (need_restart)
 		return 1;
 	return 0;
+}
+
+static int rseq_ip_fixup(struct pt_regs *regs)
+{
+	struct task_struct *t = current;
+	void __user *start_ip = NULL;
+	void __user *post_commit_ip = NULL;
+	void __user *abort_ip = NULL;
+	uint32_t cs_flags;
+	int ret;
+
+	ret = rseq_get_rseq_cs(t, &start_ip, &post_commit_ip, &abort_ip,
+			&cs_flags);
+	trace_rseq_ip_fixup((void __user *)instruction_pointer(regs),
+		start_ip, post_commit_ip, abort_ip, t->rseq_event_counter,
+		ret);
+	if (!ret)
+		return -EFAULT;
+
+	ret = rseq_need_restart(t, cs_flags);
+	if (ret < 0)
+		return -EFAULT;
+	if (!ret)
+		return 0;
+
+	/* Handle potentially not being within a critical section. */
+	if ((void __user *)instruction_pointer(regs) >= post_commit_ip ||
+			(void __user *)instruction_pointer(regs) < start_ip)
+		return 1;
+
+	/*
+	 * We set this after potentially failing in
+	 * clear_user so that the signal arrives at the
+	 * faulting rip.
+	 */
+	instruction_pointer_set(regs, (unsigned long)abort_ip);
+	return 1;
 }
 
 /*
@@ -257,21 +272,18 @@ static int rseq_need_restart(struct task_struct *t)
 void __rseq_handle_notify_resume(struct pt_regs *regs)
 {
 	struct task_struct *t = current;
+	uint32_t cs_flags;
 	int ret;
 
 	if (unlikely(t->flags & PF_EXITING))
 		return;
-	if (!access_ok(VERIFY_WRITE, t->rseq, sizeof(*t->rseq)))
+	if (unlikely(!access_ok(VERIFY_WRITE, t->rseq, sizeof(*t->rseq))))
 		goto error;
-	ret = rseq_need_restart(t);
-	if (ret < 0)
+	ret = rseq_ip_fixup(regs, &cs_flags);
+	if (unlikely(ret < 0))
 		goto error;
-	if (ret) {
-		if (!rseq_update_cpu_id_event_counter(t))
-			goto error;
-		if (!rseq_ip_fixup(regs))
-			goto error;
-	}
+	if (unlikely(!rseq_update_cpu_id_event_counter(t, ret)))
+		goto error;
 	return;
 
 error:
