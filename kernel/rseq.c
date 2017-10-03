@@ -138,8 +138,8 @@ static bool rseq_update_cpu_id_event_counter(struct task_struct *t,
 	union rseq_cpu_event u;
 
 	u.e.cpu_id = raw_smp_processor_id();
-	u.e.event_counter = inc_event_counter ? t->event_counter++ :
-			t->event_counter;
+	u.e.event_counter = inc_event_counter ? t->rseq_event_counter++ :
+			t->rseq_event_counter;
 	if (__put_user(u.v, &t->rseq->u.v))
 		return false;
 	trace_rseq_update(t);
@@ -149,7 +149,8 @@ static bool rseq_update_cpu_id_event_counter(struct task_struct *t,
 static bool rseq_get_rseq_cs(struct task_struct *t,
 		void __user **start_ip,
 		void __user **post_commit_ip,
-		void __user **abort_ip)
+		void __user **abort_ip,
+		uint32_t *cs_flags)
 {
 	unsigned long ptr;
 	struct rseq_cs __user *urseq_cs;
@@ -176,6 +177,7 @@ static bool rseq_get_rseq_cs(struct task_struct *t,
 	*start_ip = (void __user *)rseq_cs.start_ip;
 	*post_commit_ip = (void __user *)rseq_cs.post_commit_ip;
 	*abort_ip = (void __user *)rseq_cs.abort_ip;
+	*cs_flags = rseq_cs.flags;
 	return true;
 }
 
@@ -226,7 +228,7 @@ static int rseq_ip_fixup(struct pt_regs *regs)
 	void __user *start_ip = NULL;
 	void __user *post_commit_ip = NULL;
 	void __user *abort_ip = NULL;
-	uint32_t cs_flags;
+	uint32_t cs_flags = 0;
 	int ret;
 
 	ret = rseq_get_rseq_cs(t, &start_ip, &post_commit_ip, &abort_ip,
@@ -272,14 +274,13 @@ static int rseq_ip_fixup(struct pt_regs *regs)
 void __rseq_handle_notify_resume(struct pt_regs *regs)
 {
 	struct task_struct *t = current;
-	uint32_t cs_flags;
 	int ret;
 
 	if (unlikely(t->flags & PF_EXITING))
 		return;
 	if (unlikely(!access_ok(VERIFY_WRITE, t->rseq, sizeof(*t->rseq))))
 		goto error;
-	ret = rseq_ip_fixup(regs, &cs_flags);
+	ret = rseq_ip_fixup(regs);
 	if (unlikely(ret < 0))
 		goto error;
 	if (unlikely(!rseq_update_cpu_id_event_counter(t, ret)))
