@@ -387,6 +387,39 @@ bool rseq_finish_memcpy_release(void *p_memcpy, void *to_write_memcpy,
 			RSEQ_FINISH_MEMCPY, true);
 }
 
+#define __do_rseq_fastpath(_type, _lock, _rseq_state, _cpu, _result,	\
+		_targetptr_spec, _newval_spec,				\
+		_dest_memcpy, _src_memcpy, _len_memcpy,			\
+		_targetptr_final, _newval_final, _code, _release)	\
+	_rseq_state = rseq_start_rlock(_lock);				\
+	_cpu = rseq_cpu_at_start(_rseq_state);				\
+	_result = true;							\
+	_code								\
+	if (unlikely(!_result))						\
+		break;							\
+	if (likely(rseq_finish_rlock(_lock,				\
+			_targetptr_spec, _newval_spec,			\
+			_dest_memcpy, _src_memcpy, _len_memcpy,		\
+			_targetptr_final, _newval_final,		\
+			_rseq_state, _type, _release)))			\
+		break;
+
+#define __do_rseq_slowpath(_type, _lock, _rseq_state, _cpu, _result,	\
+		_targetptr_spec, _newval_spec,				\
+		_dest_memcpy, _src_memcpy, _len_memcpy,			\
+		_targetptr_final, _newval_final, _code, _release)	\
+	_cpu = rseq_fallback_begin(_lock);				\
+	_rseq_state = rseq_start();					\
+	_result = true;							\
+	_code								\
+	if (unlikely(!__rseq_finish(_targetptr_spec,			\
+			_newval_spec,					\
+			_dest_memcpy, _src_memcpy, _len_memcpy,		\
+			_targetptr_final, _newval_final,		\
+			_rseq_state, _type, _release)))			\
+		abort();	/* Should never be restarted. */	\
+	rseq_fallback_end(_lock, _cpu);
+
 /*
  * Helper macro doing two restartable critical section attempts, and if
  * they fail, fallback on locking.
@@ -396,41 +429,18 @@ bool rseq_finish_memcpy_release(void *p_memcpy, void *to_write_memcpy,
 		_dest_memcpy, _src_memcpy, _len_memcpy,			\
 		_targetptr_final, _newval_final, _code, _release)	\
 	do {								\
-		_rseq_state = rseq_start_rlock(_lock);			\
-		_cpu = rseq_cpu_at_start(_rseq_state);			\
-		_result = true;						\
-		_code							\
-		if (unlikely(!_result))					\
-			break;						\
-		if (likely(rseq_finish_rlock(_lock,			\
-				_targetptr_spec, _newval_spec,		\
-				_dest_memcpy, _src_memcpy, _len_memcpy,	\
-				_targetptr_final, _newval_final,	\
-				_rseq_state, _type, _release)))		\
-			break;						\
-		_rseq_state = rseq_start_rlock(_lock);			\
-		_cpu = rseq_cpu_at_start(_rseq_state);			\
-		_result = true;						\
-		_code							\
-		if (unlikely(!_result))					\
-			break;						\
-		if (likely(rseq_finish_rlock(_lock,			\
-				_targetptr_spec, _newval_spec,		\
-				_dest_memcpy, _src_memcpy, _len_memcpy,	\
-				_targetptr_final, _newval_final,	\
-				_rseq_state, _type, _release)))		\
-			break;						\
-		_cpu = rseq_fallback_begin(_lock);			\
-		_rseq_state = rseq_start();				\
-		_result = true;						\
-		_code							\
-		if (unlikely(!__rseq_finish(_targetptr_spec,		\
-				_newval_spec,				\
-				_dest_memcpy, _src_memcpy, _len_memcpy,	\
-				_targetptr_final, _newval_final,	\
-				_rseq_state, _type, _release)))		\
-			abort();	/* Should never be restarted. */ \
-		rseq_fallback_end(_lock, _cpu);				\
+		__do_rseq_fastpath(_type, _lock, _rseq_state, _cpu,	\
+			 _result, _targetptr_spec, _newval_spec,	\
+			_dest_memcpy, _src_memcpy, _len_memcpy,		\
+			_targetptr_final, _newval_final, _code, _release); \
+		__do_rseq_fastpath(_type, _lock, _rseq_state, _cpu,	\
+			 _result, _targetptr_spec, _newval_spec,	\
+			_dest_memcpy, _src_memcpy, _len_memcpy,		\
+			_targetptr_final, _newval_final, _code, _release); \
+		__do_rseq_slowpath(_type, _lock, _rseq_state, _cpu,	\
+			 _result, _targetptr_spec, _newval_spec,	\
+			_dest_memcpy, _src_memcpy, _len_memcpy,		\
+			_targetptr_final, _newval_final, _code, _release); \
 	} while (0)
 
 #define do_rseq(_lock, _rseq_state, _cpu, _result, _targetptr, _newval,	\
