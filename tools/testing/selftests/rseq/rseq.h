@@ -95,9 +95,11 @@ enum rseq_lock_state {
 	RSEQ_LOCK_STATE_FAIL = 2,
 };
 
+typedef int32_t rseq_t;
+
 struct rseq_lock {
 	pthread_mutex_t lock;
-	int32_t state;		/* enum rseq_lock_state */
+	rseq_t state;		/* enum rseq_lock_state */
 };
 
 /* State returned by rseq_start, passed as argument to rseq_finish. */
