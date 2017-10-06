@@ -387,29 +387,6 @@ bool rseq_finish_memcpy_release(void *p_memcpy, void *to_write_memcpy,
 			RSEQ_FINISH_MEMCPY, true);
 }
 
-#define __rseq_store_RSEQ_FINISH_SINGLE(_targetptr_spec, _newval_spec,	\
-		_dest_memcpy, _src_memcpy, _len_memcpy,			\
-		_targetptr_final, _newval_final)			\
-	do {								\
-		*(_targetptr_final) = (_newval_final);			\
-	} while (0)
-
-#define __rseq_store_RSEQ_FINISH_TWO(_targetptr_spec, _newval_spec,	\
-		_dest_memcpy, _src_memcpy, _len_memcpy,			\
-		_targetptr_final, _newval_final)			\
-	do {								\
-		*(_targetptr_spec) = (_newval_spec);			\
-		*(_targetptr_final) = (_newval_final);			\
-	} while (0)
-
-#define __rseq_store_RSEQ_FINISH_MEMCPY(_targetptr_spec,		\
-		_newval_spec, _dest_memcpy, _src_memcpy, _len_memcpy,	\
-		_targetptr_final, _newval_final)			\
-	do {								\
-		memcpy(_dest_memcpy, _src_memcpy, _len_memcpy);		\
-		*(_targetptr_final) = (_newval_final);			\
-	} while (0)
-
 /*
  * Helper macro doing two restartable critical section attempts, and if
  * they fail, fallback on locking.
@@ -444,13 +421,15 @@ bool rseq_finish_memcpy_release(void *p_memcpy, void *to_write_memcpy,
 				_rseq_state, _type, _release)))		\
 			break;						\
 		_cpu = rseq_fallback_begin(_lock);			\
+		_rseq_state = rseq_start();				\
 		_result = true;						\
 		_code							\
-		if (likely(_result))					\
-			__rseq_store_##_type(_targetptr_spec,		\
-				 _newval_spec, _dest_memcpy,		\
-				_src_memcpy, _len_memcpy,		\
-				_targetptr_final, _newval_final);	\
+		if (unlikely(!__rseq_finish(_targetptr_spec,		\
+				_newval_spec,				\
+				_dest_memcpy, _src_memcpy, _len_memcpy,	\
+				_targetptr_final, _newval_final,	\
+				_rseq_state, _type, _release)))		\
+			abort();	/* Should never be restarted. */ \
 		rseq_fallback_end(_lock, _cpu);				\
 	} while (0)
 

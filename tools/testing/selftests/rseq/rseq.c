@@ -212,11 +212,15 @@ int rseq_fallback_current_cpu(void)
 int rseq_fallback_begin(struct rseq_lock *rlock)
 {
 	rseq_fallback_lock(rlock);
+	ACCESS_ONCE(__rseq_abi.flags) = RSEQ_CS_FLAG_NO_RESTART_ON_PREEMPT
+			| RSEQ_CS_FLAG_NO_RESTART_ON_SIGNAL
+			| RSEQ_CS_FLAG_NO_RESTART_ON_MIGRATE;
 	return rseq_fallback_current_cpu();
 }
 
 void rseq_fallback_end(struct rseq_lock *rlock, int cpu)
 {
+	ACCESS_ONCE(__rseq_abi.flags) = 0;
 	rseq_fallback_unlock(rlock, cpu);
 }
 
