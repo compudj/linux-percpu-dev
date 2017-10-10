@@ -35,6 +35,8 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/rseq.h>
 
+#define TMP_BUFLEN	64
+
 /*
  * The restartable sequences mechanism is the overlap of two distinct
  * restart mechanisms: a sequence counter tracking preemption and signal
@@ -351,4 +353,534 @@ SYSCALL_DEFINE2(rseq, struct rseq __user *, rseq, int, flags)
 	}
 
 	return 0;
+}
+
+/*
+ * Check operation types and length parameters.
+ */
+static int rseq_op_vec_check(struct rseq_op *rseqop, int rseqopcnt)
+{
+	int i;
+
+	for (i = 0; i < rseqopcnt; i++) {
+		struct rseq_op *op = &rseqop[i];
+
+		switch (op->op) {
+		case RSEQ_COMPARE_EQ_OP:
+		case RSEQ_MEMCPY_OP:
+			if (op->len > RSEQ_OP_DATA_LEN_MAX)
+				return -EINVAL;
+			break;
+		case RSEQ_ADD_OP:
+		case RSEQ_OR_OP:
+		case RSEQ_AND_OP:
+		case RSEQ_XOR_OP:
+			switch (op->len) {
+			case 1:
+			case 2:
+			case 4:
+			case 8:
+				break;
+			default:
+				return -EINVAL;
+			}
+			break;
+		case RSEQ_LSHIFT_OP:
+		case RSEQ_RSHIFT_OP:
+			switch (op->len) {
+			case 1:
+				if (op->u.shift_op.bits > 7)
+					return -EINVAL;
+				break;
+			case 2:
+				if (op->u.shift_op.bits > 15)
+					return -EINVAL;
+				break;
+			case 4:
+				if (op->u.shift_op.bits > 31)
+					return -EINVAL;
+				break;
+			case 8:
+				if (op->u.shift_op.bits > 63)
+					return -EINVAL;
+				break;
+			default:
+				return -EINVAL;
+			}
+			break;
+		default:
+			return -EINVAL;
+		}
+	}
+	return 0;
+}
+
+static unsigned long rseq_op_range_nr_pages(unsigned long addr,
+		unsigned long len)
+{
+	return ((addr + len - 1) >> PAGE_SHIFT) - (addr >> PAGE_SHIFT) + 1;
+}
+
+static int rseq_op_pin_pages(unsigned long addr, unsigned long len,
+		struct page **pinned_pages, size_t *nr_pinned)
+{
+	unsigned long nr_pages;
+	struct page *pages[2];
+	int ret;
+
+	if (!len)
+		return 0;
+	nr_pages = rseq_op_range_nr_pages(addr, len);
+	BUG_ON(nr_pages > 2);
+
+	ret = get_user_pages_fast(addr, nr_pages, 0, pages);
+	if (ret < nr_pages) {
+		if (ret > 0) {
+			put_page(pages[0]);
+		}
+		return -EFAULT;
+	}
+	pinned_pages[(*nr_pinned)++] = pages[0];
+	if (nr_pages > 1)
+		pinned_pages[(*nr_pinned)++] = pages[1];
+	return 0;
+}
+
+static int rseq_op_vec_pin_pages(struct rseq_op *rseqop, int rseqopcnt,
+		struct page **pinned_pages, size_t *nr_pinned)
+{
+	int ret, i;
+
+	/* Check access, pin pages. */
+	for (i = 0; i < rseqopcnt; i++) {
+		struct rseq_op *op = &rseqop[i];
+
+		switch (op->op) {
+		case RSEQ_COMPARE_EQ_OP:
+			if (!access_ok(VERIFY_READ, op->u.compare_op.a, op->len))
+				goto error;
+			ret = rseq_op_pin_pages((unsigned long)op->u.compare_op.a,
+					op->len, pinned_pages, nr_pinned);
+			if (ret)
+				goto error;
+			if (!access_ok(VERIFY_READ, op->u.compare_op.b, op->len))
+				goto error;
+			ret = rseq_op_pin_pages((unsigned long)op->u.compare_op.b,
+					op->len, pinned_pages, nr_pinned);
+			if (ret)
+				goto error;
+			break;
+		case RSEQ_MEMCPY_OP:
+			if (!access_ok(VERIFY_WRITE, op->u.memcpy_op.src, op->len))
+				goto error;
+			ret = rseq_op_pin_pages((unsigned long)op->u.memcpy_op.dst,
+					op->len, pinned_pages, nr_pinned);
+			if (ret)
+				goto error;
+			if (!access_ok(VERIFY_READ, op->u.memcpy_op.src, op->len))
+				goto error;
+			ret = rseq_op_pin_pages((unsigned long)op->u.memcpy_op.src,
+					op->len, pinned_pages, nr_pinned);
+			if (ret)
+				goto error;
+			break;
+		case RSEQ_ADD_OP:
+			if (!access_ok(VERIFY_WRITE, op->u.arithmetic_op.p, op->len))
+				goto error;
+			ret = rseq_op_pin_pages((unsigned long)op->u.arithmetic_op.p,
+					op->len, pinned_pages, nr_pinned);
+			if (ret)
+				goto error;
+			break;
+		case RSEQ_OR_OP:
+		case RSEQ_AND_OP:
+		case RSEQ_XOR_OP:
+			if (!access_ok(VERIFY_WRITE, op->u.bitwise_op.p, op->len))
+				goto error;
+			ret = rseq_op_pin_pages((unsigned long)op->u.bitwise_op.p,
+					op->len, pinned_pages, nr_pinned);
+			if (ret)
+				goto error;
+			break;
+		default:
+			return -EINVAL;
+		}
+	}
+	return 0;
+
+error:
+	for (i = 0; i < *nr_pinned; i++)
+		put_page(pinned_pages[i]);
+	*nr_pinned = 0;
+	return ret;
+}
+
+/* Return 0 if same, > 0 if different, < 0 on error. */
+static int __rseq_do_op_compare(void __user *a, void __user *b, uint32_t len)
+{
+	char bufa[TMP_BUFLEN], bufb[TMP_BUFLEN];
+	uint32_t compared = 0;
+
+	for (;;) {
+		unsigned long to_compare;
+
+		if (compared == len)
+			break;
+		to_compare = min_t(uint32_t, TMP_BUFLEN, len - compared);
+		if (__copy_from_user_inatomic(bufa, a + compared, to_compare))
+			return -EFAULT;
+		if (__copy_from_user_inatomic(bufb, b + compared, to_compare))
+			return -EFAULT;
+		if (memcmp(bufa, bufb, to_compare))
+			return 1;	/* different */
+		compared += to_compare;
+	}
+	return 0;	/* same */
+}
+
+/* Return 0 on success, < 0 on error. */
+static int __rseq_do_op_memcpy(void __user *dst, void __user *src, uint32_t len)
+{
+	char buf[TMP_BUFLEN];
+	uint32_t copied = 0;
+
+	for (;;) {
+		unsigned long to_copy;
+
+		if (copied == len)
+			break;
+		to_copy = min_t(uint32_t, TMP_BUFLEN, len - copied);
+		if (__copy_from_user_inatomic(buf, src + copied, to_copy))
+			return -EFAULT;
+		if (__copy_to_user_inatomic(dst + copied, buf, to_copy))
+			return -EFAULT;
+		copied += to_copy;
+	}
+	return 0;
+}
+
+/* Return 0 on success, < 0 on error. */
+static int __rseq_do_op_add(void __user *p, int64_t count, uint32_t len)
+{
+	union {
+		uint8_t _u8;
+		uint16_t _u16;
+		uint32_t _u32;
+		uint64_t _u64;
+	} tmp;
+
+	if (__copy_from_user_inatomic(&tmp, p, len))
+		return -EFAULT;
+	switch (len) {
+	case 1:
+		tmp._u8 += (uint8_t)count;
+		break;
+	case 2:
+		tmp._u16 += (uint16_t)count;
+		break;
+	case 4:
+		tmp._u32 += (uint32_t)count;
+		break;
+	case 8:
+		tmp._u64 += (uint64_t)count;
+		break;
+	default:
+		return -EINVAL;
+	}
+	if (__copy_to_user_inatomic(p, &tmp, len))
+		return -EFAULT;
+	return 0;
+}
+
+/* Return 0 on success, < 0 on error. */
+static int __rseq_do_op_or(void __user *p, uint64_t mask, uint32_t len)
+{
+	union {
+		uint8_t _u8;
+		uint16_t _u16;
+		uint32_t _u32;
+		uint64_t _u64;
+	} tmp;
+
+	if (__copy_from_user_inatomic(&tmp, p, len))
+		return -EFAULT;
+	switch (len) {
+	case 1:
+		tmp._u8 |= (uint8_t)mask;
+		break;
+	case 2:
+		tmp._u16 |= (uint16_t)mask;
+		break;
+	case 4:
+		tmp._u32 |= (uint32_t)mask;
+		break;
+	case 8:
+		tmp._u64 |= (uint64_t)mask;
+		break;
+	default:
+		return -EINVAL;
+	}
+	if (__copy_to_user_inatomic(p, &tmp, len))
+		return -EFAULT;
+	return 0;
+}
+
+/* Return 0 on success, < 0 on error. */
+static int __rseq_do_op_and(void __user *p, uint64_t mask, uint32_t len)
+{
+	union {
+		uint8_t _u8;
+		uint16_t _u16;
+		uint32_t _u32;
+		uint64_t _u64;
+	} tmp;
+
+	if (__copy_from_user_inatomic(&tmp, p, len))
+		return -EFAULT;
+	switch (len) {
+	case 1:
+		tmp._u8 &= (uint8_t)mask;
+		break;
+	case 2:
+		tmp._u16 &= (uint16_t)mask;
+		break;
+	case 4:
+		tmp._u32 &= (uint32_t)mask;
+		break;
+	case 8:
+		tmp._u64 &= (uint64_t)mask;
+		break;
+	default:
+		return -EINVAL;
+	}
+	if (__copy_to_user_inatomic(p, &tmp, len))
+		return -EFAULT;
+	return 0;
+}
+
+/* Return 0 on success, < 0 on error. */
+static int __rseq_do_op_xor(void __user *p, uint64_t mask, uint32_t len)
+{
+	union {
+		uint8_t _u8;
+		uint16_t _u16;
+		uint32_t _u32;
+		uint64_t _u64;
+	} tmp;
+
+	if (__copy_from_user_inatomic(&tmp, p, len))
+		return -EFAULT;
+	switch (len) {
+	case 1:
+		tmp._u8 ^= (uint8_t)mask;
+		break;
+	case 2:
+		tmp._u16 ^= (uint16_t)mask;
+		break;
+	case 4:
+		tmp._u32 ^= (uint32_t)mask;
+		break;
+	case 8:
+		tmp._u64 ^= (uint64_t)mask;
+		break;
+	default:
+		return -EINVAL;
+	}
+	if (__copy_to_user_inatomic(p, &tmp, len))
+		return -EFAULT;
+	return 0;
+}
+
+/* Return 0 on success, < 0 on error. */
+static int __rseq_do_op_lshift(void __user *p, uint32_t bits, uint32_t len)
+{
+	union {
+		uint8_t _u8;
+		uint16_t _u16;
+		uint32_t _u32;
+		uint64_t _u64;
+	} tmp;
+
+	if (__copy_from_user_inatomic(&tmp, p, len))
+		return -EFAULT;
+	switch (len) {
+	case 1:
+		tmp._u8 <<= (uint8_t)bits;
+		break;
+	case 2:
+		tmp._u16 <<= (uint16_t)bits;
+		break;
+	case 4:
+		tmp._u32 <<= (uint32_t)bits;
+		break;
+	case 8:
+		tmp._u64 <<= (uint64_t)bits;
+		break;
+	default:
+		return -EINVAL;
+	}
+	if (__copy_to_user_inatomic(p, &tmp, len))
+		return -EFAULT;
+	return 0;
+}
+
+/* Return 0 on success, < 0 on error. */
+static int __rseq_do_op_rshift(void __user *p, uint32_t bits, uint32_t len)
+{
+	union {
+		uint8_t _u8;
+		uint16_t _u16;
+		uint32_t _u32;
+		uint64_t _u64;
+	} tmp;
+
+	if (__copy_from_user_inatomic(&tmp, p, len))
+		return -EFAULT;
+	switch (len) {
+	case 1:
+		tmp._u8 >>= (uint8_t)bits;
+		break;
+	case 2:
+		tmp._u16 >>= (uint16_t)bits;
+		break;
+	case 4:
+		tmp._u32 >>= (uint32_t)bits;
+		break;
+	case 8:
+		tmp._u64 >>= (uint64_t)bits;
+		break;
+	default:
+		return -EINVAL;
+	}
+	if (__copy_to_user_inatomic(p, &tmp, len))
+		return -EFAULT;
+	return 0;
+}
+
+static int __rseq_do_op_vec(struct rseq_op *rseqop, int rseqopcnt)
+{
+	int i, ret;
+
+	for (i = 0; i < rseqopcnt; i++) {
+		struct rseq_op *op = &rseqop[i];
+
+		switch (op->op) {
+		case RSEQ_COMPARE_EQ_OP:
+			ret = __rseq_do_op_compare(
+					(void __user *)op->u.compare_op.a,
+					(void __user *)op->u.compare_op.b,
+					op->len);
+			/* Stop execution if error or comparison differs. */
+			if (ret)
+				return ret;
+			break;
+		case RSEQ_MEMCPY_OP:
+			ret = __rseq_do_op_memcpy(
+					(void __user *)op->u.memcpy_op.dst,
+					(void __user *)op->u.memcpy_op.src,
+					op->len);
+			/* Stop execution on error. */
+			if (ret)
+				return ret;
+			break;
+		case RSEQ_ADD_OP:
+			ret = __rseq_do_op_add((void __user *)op->u.arithmetic_op.p,
+					op->u.arithmetic_op.count, op->len);
+			/* Stop execution on error. */
+			if (ret)
+				return ret;
+			break;
+		case RSEQ_OR_OP:
+			ret = __rseq_do_op_or((void __user *)op->u.bitwise_op.p,
+					op->u.bitwise_op.mask, op->len);
+			/* Stop execution on error. */
+			if (ret)
+				return ret;
+			break;
+		case RSEQ_AND_OP:
+			ret = __rseq_do_op_and((void __user *)op->u.bitwise_op.p,
+					op->u.bitwise_op.mask, op->len);
+			/* Stop execution on error. */
+			if (ret)
+				return ret;
+			break;
+		case RSEQ_XOR_OP:
+			ret = __rseq_do_op_xor((void __user *)op->u.bitwise_op.p,
+					op->u.bitwise_op.mask, op->len);
+			/* Stop execution on error. */
+			if (ret)
+				return ret;
+			break;
+		case RSEQ_LSHIFT_OP:
+			ret = __rseq_do_op_lshift((void __user *)op->u.shift_op.p,
+					op->u.shift_op.bits, op->len);
+			/* Stop execution on error. */
+			if (ret)
+				return ret;
+			break;
+		case RSEQ_RSHIFT_OP:
+			ret = __rseq_do_op_rshift((void __user *)op->u.shift_op.p,
+					op->u.shift_op.bits, op->len);
+			/* Stop execution on error. */
+			if (ret)
+				return ret;
+			break;
+		default:
+			return -EINVAL;
+		}
+	}
+	return 0;
+}
+
+static int rseq_do_op_vec(struct rseq_op *rseqop, int rseqopcnt, int cpu)
+{
+	int ret;
+
+	preempt_disable();
+	if (cpu != smp_processor_id()) {
+		ret = -EAGAIN;
+		goto end;
+	}
+	ret = __rseq_do_op_vec(rseqop, rseqopcnt);
+end:
+	preempt_enable();
+	return ret;
+}
+
+/*
+ * sys_rseq_op - copy atomically user-space data on a given CPU.
+ *
+ * Userspace should pass current CPU number as parameter. May fail with
+ * -EAGAIN if currently executing on the wrong CPU.
+ */
+SYSCALL_DEFINE4(rseq_op, struct rseq_op __user *, urseqop, int, rseqopcnt,
+		int, cpu, int, flags)
+{
+	struct rseq_op rseqop[RSEQ_OP_VEC_LEN_MAX];
+	struct page **pinned_pages = NULL;
+	int ret, i;
+	size_t nr_pinned = 0;
+
+	if (unlikely(flags))
+		return -EINVAL;
+	if (rseqopcnt < 0 || rseqopcnt > RSEQ_OP_VEC_LEN_MAX)
+		return -EINVAL;
+	if (copy_from_user(rseqop, urseqop, rseqopcnt * sizeof(struct rseq_op)))
+		return -EFAULT;
+	ret = rseq_op_vec_check(rseqop, rseqopcnt);
+	if (ret)
+		return ret;
+	pinned_pages = kzalloc(RSEQ_OP_VEC_LEN_MAX * RSEQ_OP_MAX_PAGES
+				* sizeof(struct page *), GFP_KERNEL);
+	if (!pinned_pages)
+		return -ENOMEM;
+	ret = rseq_op_vec_pin_pages(rseqop, rseqopcnt, pinned_pages, &nr_pinned);
+	if (ret)
+		goto end;
+	ret = rseq_do_op_vec(rseqop, rseqopcnt, cpu);
+	for (i = 0; i < nr_pinned; i++)
+		put_page(pinned_pages[i]);
+end:
+	kfree(pinned_pages);
+	return ret;
 }

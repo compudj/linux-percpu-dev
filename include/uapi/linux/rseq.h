@@ -128,4 +128,49 @@ struct rseq {
 	uint32_t flags;
 } __attribute__((aligned(4 * sizeof(uint64_t))));
 
+#define RSEQ_OP_VEC_LEN_MAX		16
+#define RSEQ_OP_ARG_LEN_MAX		24
+#define RSEQ_OP_DATA_LEN_MAX		PAGE_SIZE
+#define RSEQ_OP_MAX_PAGES		4	/* Max. pages per op. */
+
+enum rseq_op_type {
+	RSEQ_COMPARE_EQ_OP,	/* compare */
+	RSEQ_MEMCPY_OP,		/* memcpy */
+	RSEQ_ADD_OP,		/* arithmetic */
+	RSEQ_OR_OP,		/* bitwise */
+	RSEQ_AND_OP,		/* bitwise */
+	RSEQ_XOR_OP,		/* bitwise */
+	RSEQ_LSHIFT_OP,		/* shift */
+	RSEQ_RSHIFT_OP,		/* shift */
+};
+
+/* Vector of operations to perform. Limited to 16. */
+struct rseq_op {
+	int32_t op;	/* enum rseq_op_type. */
+	uint32_t len;	/* data length, in bytes. */
+	union {
+		struct {
+			RSEQ_FIELD_u32_u64(a);
+			RSEQ_FIELD_u32_u64(b);
+		} compare_op;
+		struct {
+			RSEQ_FIELD_u32_u64(dst);
+			RSEQ_FIELD_u32_u64(src);
+		} memcpy_op;
+		struct {
+			RSEQ_FIELD_u32_u64(p);
+			int64_t count;
+		} arithmetic_op;
+		struct {
+			RSEQ_FIELD_u32_u64(p);
+			uint64_t mask;
+		} bitwise_op;
+		struct {
+			RSEQ_FIELD_u32_u64(p);
+			uint32_t bits;
+		} shift_op;
+		char __padding[RSEQ_OP_ARG_LEN_MAX];
+	} u;
+};
+
 #endif /* _UAPI_LINUX_RSEQ_H */
