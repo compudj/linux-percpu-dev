@@ -1,7 +1,7 @@
 CFLAGS += -O2 -Wall -g -I./ -I../../../../usr/include/
 LDFLAGS += -lpthread
 
-TESTS = basic_test basic_percpu_ops_test param_test
+TESTS = basic_test basic_percpu_ops_test param_test basic_rseq_op_test
 
 all: $(TESTS)
 %: %.c rseq.h rseq-*.h rseq.c

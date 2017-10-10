@@ -53,6 +53,11 @@ static int sys_rseq(volatile struct rseq *rseq_abi, int flags)
 	return syscall(__NR_rseq, rseq_abi, flags);
 }
 
+int rseq_op(struct rseq_op *rseqop, int rseqopcnt, int cpu, int flags)
+{
+	return syscall(__NR_rseq_op, rseqop, rseqopcnt, cpu, flags);
+}
+
 int rseq_register_current_thread(void)
 {
 	int rc;

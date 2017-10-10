@@ -110,6 +110,8 @@ struct rseq_state {
 	int32_t lock_state;	/* Lock state at start. */
 };
 
+int rseq_op(struct rseq_op *rseqop, int rseqopcnt, int cpu, int flags);
+
 /*
  * Register rseq for the current thread. This needs to be called once
  * by any thread which uses restartable sequences, before they start
