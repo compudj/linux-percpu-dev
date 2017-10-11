@@ -890,28 +890,28 @@ static int __rseq_do_op_lshift(void __user *p, uint32_t bits, uint32_t len)
 	case 1:
 		if (__get_user(tmp._u8, (uint8_t __user *)p))
 			goto end;
-		tmp._u8 <<= (uint8_t)bits;
+		tmp._u8 <<= bits;
 		if (__put_user(tmp._u8, (uint8_t __user *)p))
 			goto end;
 		break;
 	case 2:
 		if (__get_user(tmp._u16, (uint16_t __user *)p))
 			goto end;
-		tmp._u16 <<= (uint16_t)bits;
+		tmp._u16 <<= bits;
 		if (__put_user(tmp._u16, (uint16_t __user *)p))
 			goto end;
 		break;
 	case 4:
 		if (__get_user(tmp._u32, (uint32_t __user *)p))
 			goto end;
-		tmp._u32 <<= (uint32_t)bits;
+		tmp._u32 <<= bits;
 		if (__put_user(tmp._u32, (uint32_t __user *)p))
 			goto end;
 		break;
 	case 8:
 		if (__get_user(tmp._u64, (uint64_t __user *)p))
 			goto end;
-		tmp._u64 <<= (uint64_t)bits;
+		tmp._u64 <<= bits;
 		if (__put_user(tmp._u64, (uint64_t __user *)p))
 			goto end;
 		break;
@@ -941,28 +941,28 @@ static int __rseq_do_op_rshift(void __user *p, uint32_t bits, uint32_t len)
 	case 1:
 		if (__get_user(tmp._u8, (uint8_t __user *)p))
 			goto end;
-		tmp._u8 >>= (uint8_t)bits;
+		tmp._u8 >>= bits;
 		if (__put_user(tmp._u8, (uint8_t __user *)p))
 			goto end;
 		break;
 	case 2:
 		if (__get_user(tmp._u16, (uint16_t __user *)p))
 			goto end;
-		tmp._u16 >>= (uint16_t)bits;
+		tmp._u16 >>= bits;
 		if (__put_user(tmp._u16, (uint16_t __user *)p))
 			goto end;
 		break;
 	case 4:
 		if (__get_user(tmp._u32, (uint32_t __user *)p))
 			goto end;
-		tmp._u32 >>= (uint32_t)bits;
+		tmp._u32 >>= bits;
 		if (__put_user(tmp._u32, (uint32_t __user *)p))
 			goto end;
 		break;
 	case 8:
 		if (__get_user(tmp._u64, (uint64_t __user *)p))
 			goto end;
-		tmp._u64 >>= (uint64_t)bits;
+		tmp._u64 >>= bits;
 		if (__put_user(tmp._u64, (uint64_t __user *)p))
 			goto end;
 		break;
