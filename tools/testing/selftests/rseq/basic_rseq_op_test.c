@@ -459,6 +459,93 @@ static int test_xor(void)
 	return 0;
 }
 
+static int test_lshift_op(int *v, uint32_t bits)
+{
+	struct rseq_op opvec[] = {
+		[0] = {
+			.op = RSEQ_LSHIFT_OP,
+			.len = sizeof(*v),
+			.u.shift_op.p = (unsigned long)v,
+			.u.shift_op.bits = bits,
+		},
+	};
+	int ret, cpu;
+
+	do {
+		cpu = rseq_fallback_current_cpu();
+		ret = rseq_op(opvec, ARRAY_SIZE(opvec), cpu, 0);
+	} while (ret == -1 && errno == EAGAIN);
+
+	return ret;
+}
+
+static int test_lshift(void)
+{
+	int orig_v = 0xF00, v, ret;
+	uint32_t bits = 5;
+	const char *test_name = "test_lshift";
+
+	printf("Testing %s\n", test_name);
+
+	v = orig_v;
+	ret = test_lshift_op(&v, bits);
+	if (ret) {
+		printf("%s returned with %d, errno: %s\n",
+			test_name, ret, strerror(errno));
+		return -1;
+	}
+	if (v != (orig_v << bits)) {
+		printf("%s unexpected value: %d. Should be %d.\n",
+			test_name, v, orig_v << bits);
+		return -1;
+	}
+	return 0;
+}
+
+
+static int test_rshift_op(int *v, uint32_t bits)
+{
+	struct rseq_op opvec[] = {
+		[0] = {
+			.op = RSEQ_RSHIFT_OP,
+			.len = sizeof(*v),
+			.u.shift_op.p = (unsigned long)v,
+			.u.shift_op.bits = bits,
+		},
+	};
+	int ret, cpu;
+
+	do {
+		cpu = rseq_fallback_current_cpu();
+		ret = rseq_op(opvec, ARRAY_SIZE(opvec), cpu, 0);
+	} while (ret == -1 && errno == EAGAIN);
+
+	return ret;
+}
+
+static int test_rshift(void)
+{
+	int orig_v = 0xF00, v, ret;
+	uint32_t bits = 5;
+	const char *test_name = "test_rshift";
+
+	printf("Testing %s\n", test_name);
+
+	v = orig_v;
+	ret = test_rshift_op(&v, bits);
+	if (ret) {
+		printf("%s returned with %d, errno: %s\n",
+			test_name, ret, strerror(errno));
+		return -1;
+	}
+	if (v != (orig_v >> bits)) {
+		printf("%s unexpected value: %d. Should be %d.\n",
+			test_name, v, orig_v >> bits);
+		return -1;
+	}
+	return 0;
+}
+
 static int test_cmpxchg_op(void *v, void *expect, void *old, void *n,
 		size_t len)
 {
@@ -574,6 +661,8 @@ int main(int argc, char **argv)
 	ret |= test_or();
 	ret |= test_and();
 	ret |= test_xor();
+	ret |= test_lshift();
+	ret |= test_rshift();
 	ret |= test_cmpxchg_success();
 	ret |= test_cmpxchg_fail();
 
