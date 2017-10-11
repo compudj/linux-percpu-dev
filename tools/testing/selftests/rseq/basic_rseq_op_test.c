@@ -90,7 +90,7 @@ static int test_compare_eq_diff(void)
 	return 0;
 }
 
-static int test_memcpy_op(char *dst, char *src, size_t len)
+static int test_memcpy_op(void *dst, void *src, size_t len)
 {
 	struct rseq_op opvec[] = {
 		[0] = {
