@@ -604,7 +604,7 @@ static int __rseq_do_op_store(void __user *dst, void __user *src, uint32_t len)
 	}
 	ret = 0;
 end:
-	pagefault_disable();
+	pagefault_enable();
 	return ret;
 }
 
@@ -656,7 +656,7 @@ static int __rseq_do_op_add(void __user *p, int64_t count, uint32_t len)
 	}
 	ret = 0;
 end:
-	pagefault_disable();
+	pagefault_enable();
 	return ret;
 }
 
@@ -707,7 +707,7 @@ static int __rseq_do_op_or(void __user *p, uint64_t mask, uint32_t len)
 	}
 	ret = 0;
 end:
-	pagefault_disable();
+	pagefault_enable();
 	return ret;
 }
 
@@ -758,7 +758,7 @@ static int __rseq_do_op_and(void __user *p, uint64_t mask, uint32_t len)
 	}
 	ret = 0;
 end:
-	pagefault_disable();
+	pagefault_enable();
 	return ret;
 }
 
@@ -809,7 +809,7 @@ static int __rseq_do_op_xor(void __user *p, uint64_t mask, uint32_t len)
 	}
 	ret = 0;
 end:
-	pagefault_disable();
+	pagefault_enable();
 	return ret;
 }
 
@@ -860,7 +860,7 @@ static int __rseq_do_op_lshift(void __user *p, uint32_t bits, uint32_t len)
 	}
 	ret = 0;
 end:
-	pagefault_disable();
+	pagefault_enable();
 	return ret;
 }
 
@@ -911,7 +911,7 @@ static int __rseq_do_op_rshift(void __user *p, uint32_t bits, uint32_t len)
 	}
 	ret = 0;
 end:
-	pagefault_disable();
+	pagefault_enable();
 	return ret;
 }
 
