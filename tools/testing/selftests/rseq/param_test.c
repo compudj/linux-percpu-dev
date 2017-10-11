@@ -438,7 +438,8 @@ int percpu_list_push(struct percpu_list *list, struct percpu_list_node *node)
 			int ret;
 
 			cpu = rseq_current_cpu_raw();
-			expect = (intptr_t)list->c[cpu].head;
+			/* Load list->c[cpu].head with single-copy atomicity. */
+			expect = (intptr_t)READ_ONCE(list->c[cpu].head);
 			newval = (intptr_t)node;
 			targetptr = (intptr_t *)&list->c[cpu].head;
 			node->next = (struct percpu_list_node *)expect;
@@ -468,10 +469,12 @@ struct percpu_list_node *percpu_list_pop(struct percpu_list *list)
 	/* Try fast path. */
 	rseq_state = rseq_start();
 	cpu = rseq_cpu_at_start(rseq_state);
-	head = list->c[cpu].head;
+	/* Load list->c[cpu].head with single-copy atomicity. */
+	head = READ_ONCE(list->c[cpu].head);
 	if (!head)
 		return NULL;
-	next = head->next;
+	/* Load head->next with single-copy atomicity. */
+	next = READ_ONCE(head->next);
 	newval = (intptr_t)next;
 	targetptr = (intptr_t *)&list->c[cpu].head;
 	if (unlikely(!rseq_finish(targetptr, newval, rseq_state)))
@@ -482,11 +485,13 @@ struct percpu_list_node *percpu_list_pop(struct percpu_list *list)
 			int ret;
 
 			cpu = rseq_current_cpu_raw();
-			head = list->c[cpu].head;
+			/* Load list->c[cpu].head with single-copy atomicity. */
+			head = READ_ONCE(list->c[cpu].head);
 			if (!head)
 				return NULL;
 			expect = (intptr_t)head;
-			next = head->next;
+			/* Load head->next with single-copy atomicity. */
+			next = READ_ONCE(head->next);
 			newval = (intptr_t)next;
 			targetptr = (intptr_t *)&list->c[cpu].head;
 			ret = rseq_op_2cmp1store(targetptr, &expect, &newval,
@@ -611,7 +616,8 @@ bool percpu_buffer_push(struct percpu_buffer *buffer,
 	/* Try fast path. */
 	rseq_state = rseq_start();
 	cpu = rseq_cpu_at_start(rseq_state);
-	offset = buffer->c[cpu].offset;
+	/* Load offset with single-copy atomicity. */
+	offset = READ_ONCE(buffer->c[cpu].offset);
 	if (offset == buffer->c[cpu].buflen)
 		return false;
 	newval_spec = (intptr_t)node;
@@ -627,7 +633,8 @@ bool percpu_buffer_push(struct percpu_buffer *buffer,
 			int ret;
 
 			cpu = rseq_current_cpu_raw();
-			offset = buffer->c[cpu].offset;
+			/* Load offset with single-copy atomicity. */
+			offset = READ_ONCE(buffer->c[cpu].offset);
 			if (offset == buffer->c[cpu].buflen)
 				return false;
 			newval_spec = (intptr_t)node;
@@ -657,7 +664,8 @@ struct percpu_buffer_node *percpu_buffer_pop(struct percpu_buffer *buffer)
 	/* Try fast path. */
 	rseq_state = rseq_start();
 	cpu = rseq_cpu_at_start(rseq_state);
-	offset = buffer->c[cpu].offset;
+	/* Load offset with single-copy atomicity. */
+	offset = READ_ONCE(buffer->c[cpu].offset);
 	if (offset == 0)
 		return NULL;
 	head = buffer->c[cpu].array[offset - 1];
@@ -671,7 +679,8 @@ struct percpu_buffer_node *percpu_buffer_pop(struct percpu_buffer *buffer)
 			int ret;
 
 			cpu = rseq_current_cpu_raw();
-			offset = buffer->c[cpu].offset;
+			/* Load offset with single-copy atomicity. */
+			offset = READ_ONCE(buffer->c[cpu].offset);
 			if (offset == 0)
 				return NULL;
 			head = buffer->c[cpu].array[offset - 1];
@@ -817,7 +826,8 @@ bool percpu_memcpy_buffer_push(struct percpu_memcpy_buffer *buffer,
 	/* Try fast path. */
 	rseq_state = rseq_start();
 	cpu = rseq_cpu_at_start(rseq_state);
-	offset = buffer->c[cpu].offset;
+	/* Load offset with single-copy atomicity. */
+	offset = READ_ONCE(buffer->c[cpu].offset);
 	if (offset == buffer->c[cpu].buflen)
 		return false;
 	destptr = (char *)&buffer->c[cpu].array[offset];
@@ -834,7 +844,8 @@ bool percpu_memcpy_buffer_push(struct percpu_memcpy_buffer *buffer,
 			int ret;
 
 			cpu = rseq_current_cpu_raw();
-			offset = buffer->c[cpu].offset;
+			/* Load offset with single-copy atomicity. */
+			offset = READ_ONCE(buffer->c[cpu].offset);
 			if (offset == buffer->c[cpu].buflen)
 				return false;
 			destptr = (char *)&buffer->c[cpu].array[offset];
@@ -867,7 +878,8 @@ bool percpu_memcpy_buffer_pop(struct percpu_memcpy_buffer *buffer,
 	/* Try fast path. */
 	rseq_state = rseq_start();
 	cpu = rseq_cpu_at_start(rseq_state);
-	offset = buffer->c[cpu].offset;
+	/* Load offset with single-copy atomicity. */
+	offset = READ_ONCE(buffer->c[cpu].offset);
 	if (offset == 0)
 		return false;
 	destptr = (char *)item;
@@ -884,7 +896,8 @@ bool percpu_memcpy_buffer_pop(struct percpu_memcpy_buffer *buffer,
 			int ret;
 
 			cpu = rseq_current_cpu_raw();
-			offset = buffer->c[cpu].offset;
+			/* Load offset with single-copy atomicity. */
+			offset = READ_ONCE(buffer->c[cpu].offset);
 			if (offset == 0)
 				return false;
 			destptr = (char *)item;
