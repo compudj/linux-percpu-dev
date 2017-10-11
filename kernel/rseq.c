@@ -998,20 +998,30 @@ static int __rseq_do_op_vec(struct rseq_op *rseqop, int rseqopcnt)
 					(void __user *)op->u.compare_op.a,
 					(void __user *)op->u.compare_op.b,
 					op->len);
-			/* Stop execution if error or comparison differs. */
-			if (ret)
+			/* Stop execution on error. */
+			if (ret < 0)
 				return ret;
+			/*
+			 * Stop execution, return op index + 1 if comparison
+			 * differs.
+			 */
+			if (ret > 0)
+				return i + 1;
 			break;
 		case RSEQ_COMPARE_NE_OP:
 			ret = __rseq_do_op_compare(
 					(void __user *)op->u.compare_op.a,
 					(void __user *)op->u.compare_op.b,
 					op->len);
-			/* Stop execution if error or comparison is same. */
+			/* Stop execution on error. */
 			if (ret < 0)
 				return ret;
-			if (!ret)
-				return 1;
+			/*
+			 * Stop execution, return op index + 1 if comparison
+			 * is identical.
+			 */
+			if (ret == 0)
+				return i + 1;
 			break;
 		case RSEQ_MEMCPY_OP:
 			ret = __rseq_do_op_memcpy(
