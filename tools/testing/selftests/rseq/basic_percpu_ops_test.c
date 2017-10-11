@@ -9,6 +9,8 @@
 
 #include <rseq.h>
 
+#define ARRAY_SIZE(arr)	(sizeof(arr) / sizeof((arr)[0]))
+
 static struct rseq_lock rseq_lock;
 
 struct percpu_lock_entry {
@@ -45,23 +47,30 @@ struct percpu_list {
 /* A simple percpu spinlock.  Returns the cpu lock was acquired on. */
 int rseq_percpu_lock(struct percpu_lock *lock)
 {
-	struct rseq_state rseq_state;
-	intptr_t *targetptr, newval;
 	int cpu;
-	bool result;
 
 	for (;;) {
-		do_rseq(&rseq_lock, rseq_state, cpu, result, targetptr, newval,
-			{
-				if (unlikely(lock->c[cpu].v)) {
-					result = false;
-				} else {
-					newval = 1;
-					targetptr = (intptr_t *)&lock->c[cpu].v;
-				}
-			});
-		if (likely(result))
+		struct rseq_state rseq_state;
+
+		/* Try fast path. */
+		rseq_state = rseq_start();
+		cpu = rseq_cpu_at_start(rseq_state);
+		if (unlikely(lock->c[cpu].v != 0))
+			continue;	/* Retry.*/
+		if (likely(rseq_finish(&lock->c[cpu].v, 1, rseq_state)))
 			break;
+		else {
+			/* Fallback on rseq_op system call. */
+			intptr_t expect = 0, n = 1;
+			int ret;
+
+			cpu = rseq_current_cpu_raw();
+			ret = rseq_op_cmpstore(&lock->c[cpu].v, &expect, &n,
+				sizeof(intptr_t), cpu);
+			if (likely(!ret))
+				break;
+			assert(ret >= 0 || errno == EAGAIN);
+		}
 	}
 	/*
 	 * Acquire semantic when taking lock after control dependency.
@@ -133,17 +142,32 @@ void test_percpu_spinlock(void)
 int percpu_list_push(struct percpu_list *list, struct percpu_list_node *node)
 {
 	struct rseq_state rseq_state;
-	intptr_t *targetptr, newval;
+	intptr_t *targetptr, newval, expect;
 	int cpu;
-	bool result;
 
-	do_rseq(&rseq_lock, rseq_state, cpu, result, targetptr, newval,
-		{
+	/* Try fast path. */
+	rseq_state = rseq_start();
+	cpu = rseq_cpu_at_start(rseq_state);
+	newval = (intptr_t)node;
+	targetptr = (intptr_t *)&list->c[cpu].head;
+	node->next = list->c[cpu].head;
+	if (unlikely(!rseq_finish(targetptr, newval, rseq_state))) {
+		/* Fallback on rseq_op system call. */
+		for (;;) {
+			int ret;
+
+			cpu = rseq_current_cpu_raw();
+			expect = (intptr_t)list->c[cpu].head;
 			newval = (intptr_t)node;
 			targetptr = (intptr_t *)&list->c[cpu].head;
-			node->next = list->c[cpu].head;
-		});
-
+			node->next = (struct percpu_list_node *)expect;
+			ret = rseq_op_cmpstore(targetptr, &expect, &newval,
+				sizeof(intptr_t), cpu);
+			if (likely(!ret))
+				break;
+			assert(ret >= 0 || errno == EAGAIN);
+		}
+	}
 	return cpu;
 }
 
@@ -156,21 +180,39 @@ struct percpu_list_node *percpu_list_pop(struct percpu_list *list)
 {
 	struct percpu_list_node *head, *next;
 	struct rseq_state rseq_state;
-	intptr_t *targetptr, newval;
+	intptr_t *targetptr, newval, expect;
 	int cpu;
-	bool result;
 
-	do_rseq(&rseq_lock, rseq_state, cpu, result, targetptr, newval,
-		{
+	/* Try fast path. */
+	rseq_state = rseq_start();
+	cpu = rseq_cpu_at_start(rseq_state);
+	head = list->c[cpu].head;
+	if (!head)
+		return NULL;
+	next = head->next;
+	newval = (intptr_t)next;
+	targetptr = (intptr_t *)&list->c[cpu].head;
+	if (unlikely(!rseq_finish(targetptr, newval, rseq_state))) {
+		/* Fallback on rseq_op system call. */
+		for (;;) {
+			int ret;
+
+			cpu = rseq_current_cpu_raw();
 			head = list->c[cpu].head;
-			if (!head) {
-				result = false;
-			} else {
-				next = head->next;
-				newval = (intptr_t) next;
-				targetptr = (intptr_t *)&list->c[cpu].head;
-			}
-		});
+			if (!head)
+				return NULL;
+			expect = (intptr_t)head;
+			next = head->next;
+			newval = (intptr_t)next;
+			targetptr = (intptr_t *)&list->c[cpu].head;
+			ret = rseq_op_2cmp1store(targetptr, &expect, &newval,
+				&head->next, &next,
+				sizeof(intptr_t), cpu);
+			if (likely(!ret))
+				break;
+			assert(ret >= 0 || errno == EAGAIN);
+		}
+	}
 
 	return head;
 }

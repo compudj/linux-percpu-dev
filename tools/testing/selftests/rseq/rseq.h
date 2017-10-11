@@ -484,4 +484,15 @@ bool rseq_finish_memcpy_release(void *p_memcpy, void *to_write_memcpy,
 		_dest_memcpy, _src_memcpy, _len_memcpy,			\
 		_targetptr_final, _newval_final, _code, true)
 
+int rseq_op_cmpstore(void *v, void *expect, void *_new, size_t len, int cpu);
+int rseq_op_2cmp1store(void *v, void *expect, void *_new, void *check2,
+		void *expect2, size_t len, int cpu);
+int rseq_op_1cmp2store(void *v, void *expect, void *_new,
+		void *v2, void *_new2, size_t len, int cpu);
+int rseq_op_cmpxchg(void *v, void *expect, void *old, void *_new,
+		size_t len, int cpu);
+int rseq_op_add(void *v, int64_t count, size_t len, int cpu);
+int rseq_op_cmpstorememcpy(void *v, void *expect, void *_new, size_t len,
+		void *dst, void *src, size_t copylen, int cpu);
+
 #endif  /* RSEQ_H_ */

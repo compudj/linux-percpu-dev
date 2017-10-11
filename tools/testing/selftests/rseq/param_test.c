@@ -212,23 +212,30 @@ struct percpu_memcpy_buffer {
 /* A simple percpu spinlock.  Returns the cpu lock was acquired on. */
 static int rseq_percpu_lock(struct percpu_lock *lock)
 {
-	struct rseq_state rseq_state;
-	intptr_t *targetptr, newval;
 	int cpu;
-	bool result;
 
 	for (;;) {
-		do_rseq(&rseq_lock, rseq_state, cpu, result, targetptr, newval,
-			{
-				if (unlikely(lock->c[cpu].v)) {
-					result = false;
-				} else {
-					newval = 1;
-					targetptr = (intptr_t *)&lock->c[cpu].v;
-				}
-			});
-		if (likely(result))
+		struct rseq_state rseq_state;
+
+		/* Try fast path. */
+		rseq_state = rseq_start();
+		cpu = rseq_cpu_at_start(rseq_state);
+		if (unlikely(lock->c[cpu].v != 0))
+			continue;	/* Retry.*/
+		if (likely(rseq_finish(&lock->c[cpu].v, 1, rseq_state)))
 			break;
+		else {
+			/* Fallback on rseq_op system call. */
+			intptr_t expect = 0, n = 1;
+			int ret;
+
+			cpu = rseq_current_cpu_raw();
+			ret = rseq_op_cmpstore(&lock->c[cpu].v, &expect, &n,
+				sizeof(intptr_t), cpu);
+			if (likely(!ret))
+				break;
+			assert(ret >= 0 || errno == EAGAIN);
+		}
 	}
 	/*
 	 * Acquire semantic when taking lock after control dependency.
@@ -336,13 +343,25 @@ void *test_percpu_inc_thread(void *arg)
 		struct rseq_state rseq_state;
 		intptr_t *targetptr, newval;
 		int cpu;
-		bool result;
 
-		do_rseq(&rseq_lock, rseq_state, cpu, result, targetptr, newval,
-			{
-				newval = (intptr_t)data->c[cpu].count + 1;
-				targetptr = (intptr_t *)&data->c[cpu].count;
-			});
+		/* Try fast path. */
+		rseq_state = rseq_start();
+		cpu = rseq_cpu_at_start(rseq_state);
+		newval = (intptr_t)data->c[cpu].count + 1;
+		targetptr = (intptr_t *)&data->c[cpu].count;
+		if (unlikely(!rseq_finish(targetptr, newval, rseq_state))) {
+			for (;;) {
+				/* Fallback on rseq_op system call. */
+				int ret;
+
+				cpu = rseq_current_cpu_raw();
+				ret = rseq_op_add(&data->c[cpu].count, 1,
+					sizeof(intptr_t), cpu);
+				if (likely(!ret))
+					break;
+				assert(ret >= 0 || errno == EAGAIN);
+			}
+		}
 
 #ifndef BENCHMARK
 		if (i != 0 && !(i % (thread_data->reps / 10)))
@@ -403,17 +422,32 @@ void test_percpu_inc(void)
 int percpu_list_push(struct percpu_list *list, struct percpu_list_node *node)
 {
 	struct rseq_state rseq_state;
-	intptr_t *targetptr, newval;
+	intptr_t *targetptr, newval, expect;
 	int cpu;
-	bool result;
 
-	do_rseq(&rseq_lock, rseq_state, cpu, result, targetptr, newval,
-		{
+	/* Try fast path. */
+	rseq_state = rseq_start();
+	cpu = rseq_cpu_at_start(rseq_state);
+	newval = (intptr_t)node;
+	targetptr = (intptr_t *)&list->c[cpu].head;
+	node->next = list->c[cpu].head;
+	if (unlikely(!rseq_finish(targetptr, newval, rseq_state))) {
+		/* Fallback on rseq_op system call. */
+		for (;;) {
+			int ret;
+
+			cpu = rseq_current_cpu_raw();
+			expect = (intptr_t)list->c[cpu].head;
 			newval = (intptr_t)node;
 			targetptr = (intptr_t *)&list->c[cpu].head;
-			node->next = list->c[cpu].head;
-		});
-
+			node->next = (struct percpu_list_node *)expect;
+			ret = rseq_op_cmpstore(targetptr, &expect, &newval,
+				sizeof(intptr_t), cpu);
+			if (likely(!ret))
+				break;
+			assert(ret >= 0 || errno == EAGAIN);
+		}
+	}
 	return cpu;
 }
 
@@ -426,21 +460,39 @@ struct percpu_list_node *percpu_list_pop(struct percpu_list *list)
 {
 	struct percpu_list_node *head, *next;
 	struct rseq_state rseq_state;
-	intptr_t *targetptr, newval;
+	intptr_t *targetptr, newval, expect;
 	int cpu;
-	bool result;
 
-	do_rseq(&rseq_lock, rseq_state, cpu, result, targetptr, newval,
-		{
+	/* Try fast path. */
+	rseq_state = rseq_start();
+	cpu = rseq_cpu_at_start(rseq_state);
+	head = list->c[cpu].head;
+	if (!head)
+		return NULL;
+	next = head->next;
+	newval = (intptr_t)next;
+	targetptr = (intptr_t *)&list->c[cpu].head;
+	if (unlikely(!rseq_finish(targetptr, newval, rseq_state))) {
+		/* Fallback on rseq_op system call. */
+		for (;;) {
+			int ret;
+
+			cpu = rseq_current_cpu_raw();
 			head = list->c[cpu].head;
-			if (!head) {
-				result = false;
-			} else {
-				next = head->next;
-				newval = (intptr_t) next;
-				targetptr = (intptr_t *) &list->c[cpu].head;
-			}
-		});
+			if (!head)
+				return NULL;
+			expect = (intptr_t)head;
+			next = head->next;
+			newval = (intptr_t)next;
+			targetptr = (intptr_t *)&list->c[cpu].head;
+			ret = rseq_op_2cmp1store(targetptr, &expect, &newval,
+				&head->next, &next,
+				sizeof(intptr_t), cpu);
+			if (likely(!ret))
+				break;
+			assert(ret >= 0 || errno == EAGAIN);
+		}
+	}
 
 	return head;
 }
@@ -549,51 +601,81 @@ bool percpu_buffer_push(struct percpu_buffer *buffer,
 	intptr_t *targetptr_spec, newval_spec;
 	intptr_t *targetptr_final, newval_final;
 	int cpu;
-	bool result;
+	intptr_t offset;
 
-	do_rseq2(&rseq_lock, rseq_state, cpu, result,
-		targetptr_spec, newval_spec, targetptr_final, newval_final,
-		{
-			intptr_t offset = buffer->c[cpu].offset;
+	/* Try fast path. */
+	rseq_state = rseq_start();
+	cpu = rseq_cpu_at_start(rseq_state);
+	offset = buffer->c[cpu].offset;
+	if (offset == buffer->c[cpu].buflen)
+		return false;
+	newval_spec = (intptr_t)node;
+	targetptr_spec = (intptr_t *)&buffer->c[cpu].array[offset];
+	newval_final = offset + 1;
+	targetptr_final = &buffer->c[cpu].offset;
+	if (unlikely(!rseq_finish2(targetptr_spec, newval_spec,
+			targetptr_final, newval_final, rseq_state))) {
+		/* Fallback on rseq_op system call. */
+		for (;;) {
+			int ret;
 
-			if (offset == buffer->c[cpu].buflen) {
-				result = false;
-			} else {
-				newval_spec = (intptr_t)node;
-				targetptr_spec = (intptr_t *)&buffer->c[cpu].array[offset];
-				newval_final = offset + 1;
-				targetptr_final = &buffer->c[cpu].offset;
-			}
-		});
-
-	return result;
+			cpu = rseq_current_cpu_raw();
+			offset = buffer->c[cpu].offset;
+			if (offset == buffer->c[cpu].buflen)
+				return false;
+			newval_spec = (intptr_t)node;
+			targetptr_spec = (intptr_t *)&buffer->c[cpu].array[offset];
+			newval_final = offset + 1;
+			targetptr_final = &buffer->c[cpu].offset;
+			ret = rseq_op_1cmp2store(targetptr_final, &offset, &newval_final,
+				targetptr_spec, &newval_spec,
+				sizeof(intptr_t), cpu);
+			if (likely(!ret))
+				break;
+			assert(ret >= 0 || errno == EAGAIN);
+		}
+	}
+	return true;
 }
 
 struct percpu_buffer_node *percpu_buffer_pop(struct percpu_buffer *buffer)
 {
-	struct percpu_buffer_node *head;
 	struct rseq_state rseq_state;
+	struct percpu_buffer_node *head;
 	intptr_t *targetptr, newval;
 	int cpu;
-	bool result;
+	intptr_t offset;
 
-	do_rseq(&rseq_lock, rseq_state, cpu, result, targetptr, newval,
-		{
-			intptr_t offset = buffer->c[cpu].offset;
-
-			if (offset == 0) {
-				result = false;
-			} else {
-				head = buffer->c[cpu].array[offset - 1];
-				newval = offset - 1;
-				targetptr = (intptr_t *)&buffer->c[cpu].offset;
-			}
-		});
-
-	if (result)
-		return head;
-	else
+	/* Try fast path. */
+	rseq_state = rseq_start();
+	cpu = rseq_cpu_at_start(rseq_state);
+	offset = buffer->c[cpu].offset;
+	if (offset == 0)
 		return NULL;
+	head = buffer->c[cpu].array[offset - 1];
+	newval = offset - 1;
+	targetptr = (intptr_t *)&buffer->c[cpu].offset;
+	if (unlikely(!rseq_finish(targetptr, newval, rseq_state))) {
+		/* Fallback on rseq_op system call. */
+		for (;;) {
+			int ret;
+
+			cpu = rseq_current_cpu_raw();
+			offset = buffer->c[cpu].offset;
+			if (offset == 0)
+				return NULL;
+			head = buffer->c[cpu].array[offset - 1];
+			newval = offset - 1;
+			targetptr = (intptr_t *)&buffer->c[cpu].offset;
+			ret = rseq_op_2cmp1store(targetptr, &offset, &newval,
+				&buffer->c[cpu].array[offset - 1], &head,
+				sizeof(intptr_t), cpu);
+			if (likely(!ret))
+				break;
+			assert(ret >= 0 || errno == EAGAIN);
+		}
+	}
+	return head;
 }
 
 void *test_percpu_buffer_thread(void *arg)
@@ -719,25 +801,43 @@ bool percpu_memcpy_buffer_push(struct percpu_memcpy_buffer *buffer,
 	size_t copylen;
 	intptr_t *targetptr_final, newval_final;
 	int cpu;
-	bool result;
+	intptr_t offset;
 
-	do_rseq_memcpy(&rseq_lock, rseq_state, cpu, result,
-		destptr, srcptr, copylen, targetptr_final, newval_final,
-		{
-			intptr_t offset = buffer->c[cpu].offset;
+	/* Try fast path. */
+	rseq_state = rseq_start();
+	cpu = rseq_cpu_at_start(rseq_state);
+	offset = buffer->c[cpu].offset;
+	if (offset == buffer->c[cpu].buflen)
+		return false;
+	destptr = (char *)&buffer->c[cpu].array[offset];
+	srcptr = (char *)&item;
+	copylen = sizeof(item);
+	newval_final = offset + 1;
+	targetptr_final = &buffer->c[cpu].offset;
+	if (unlikely(!rseq_finish_memcpy(destptr, srcptr, copylen,
+			targetptr_final, newval_final, rseq_state))) {
+		/* Fallback on rseq_op system call. */
+		for (;;) {
+			int ret;
 
-			if (offset == buffer->c[cpu].buflen) {
-				result = false;
-			} else {
-				destptr = (char *)&buffer->c[cpu].array[offset];
-				srcptr = (char *)&item;
-				copylen = sizeof(item);
-				newval_final = offset + 1;
-				targetptr_final = &buffer->c[cpu].offset;
-			}
-		});
-
-	return result;
+			cpu = rseq_current_cpu_raw();
+			offset = buffer->c[cpu].offset;
+			if (offset == buffer->c[cpu].buflen)
+				return false;
+			destptr = (char *)&buffer->c[cpu].array[offset];
+			srcptr = (char *)&item;
+			copylen = sizeof(item);
+			newval_final = offset + 1;
+			targetptr_final = &buffer->c[cpu].offset;
+			/* copylen must be <= PAGE_SIZE. */
+			ret = rseq_op_cmpstorememcpy(targetptr_final, &offset, &newval_final,
+				sizeof(intptr_t), destptr, srcptr, copylen, cpu);
+			if (likely(!ret))
+				break;
+			assert(ret >= 0 || errno == EAGAIN);
+		}
+	}
+	return true;
 }
 
 bool percpu_memcpy_buffer_pop(struct percpu_memcpy_buffer *buffer,
@@ -748,25 +848,43 @@ bool percpu_memcpy_buffer_pop(struct percpu_memcpy_buffer *buffer,
 	size_t copylen;
 	intptr_t *targetptr_final, newval_final;
 	int cpu;
-	bool result;
+	intptr_t offset;
 
-	do_rseq_memcpy(&rseq_lock, rseq_state, cpu, result,
-		destptr, srcptr, copylen, targetptr_final, newval_final,
-		{
-			intptr_t offset = buffer->c[cpu].offset;
+	/* Try fast path. */
+	rseq_state = rseq_start();
+	cpu = rseq_cpu_at_start(rseq_state);
+	offset = buffer->c[cpu].offset;
+	if (offset == 0)
+		return false;
+	destptr = (char *)item;
+	srcptr = (char *)&buffer->c[cpu].array[offset - 1];
+	copylen = sizeof(*item);
+	newval_final = offset - 1;
+	targetptr_final = &buffer->c[cpu].offset;
+	if (unlikely(!rseq_finish_memcpy(destptr, srcptr, copylen,
+			targetptr_final, newval_final, rseq_state))) {
+		/* Fallback on rseq_op system call. */
+		for (;;) {
+			int ret;
 
-			if (offset == 0) {
-				result = false;
-			} else {
-				destptr = (char *)item;
-				srcptr = (char *)&buffer->c[cpu].array[offset - 1];
-				copylen = sizeof(*item);
-				newval_final = offset - 1;
-				targetptr_final = &buffer->c[cpu].offset;
-			}
-		});
-
-	return result;
+			cpu = rseq_current_cpu_raw();
+			offset = buffer->c[cpu].offset;
+			if (offset == 0)
+				return false;
+			destptr = (char *)item;
+			srcptr = (char *)&buffer->c[cpu].array[offset - 1];
+			copylen = sizeof(*item);
+			newval_final = offset - 1;
+			targetptr_final = &buffer->c[cpu].offset;
+			/* copylen must be <= PAGE_SIZE. */
+			ret = rseq_op_cmpstorememcpy(targetptr_final, &offset, &newval_final,
+				sizeof(intptr_t), destptr, srcptr, copylen, cpu);
+			if (likely(!ret))
+				break;
+			assert(ret >= 0 || errno == EAGAIN);
+		}
+	}
+	return true;
 }
 
 void *test_percpu_memcpy_buffer_thread(void *arg)
