@@ -24,23 +24,14 @@
 #include <syscall.h>
 #include <assert.h>
 #include <signal.h>
-#include <linux/membarrier.h>
 
 #include <rseq.h>
 
 #define ARRAY_SIZE(arr)	(sizeof(arr) / sizeof((arr)[0]))
 
-#ifdef __NR_membarrier
-# define membarrier(...)		syscall(__NR_membarrier, __VA_ARGS__)
-#else
-# define membarrier(...)		-ENOSYS
-#endif
-
 __attribute__((weak)) __thread volatile struct rseq __rseq_abi = {
 	.u.e.cpu_id = -1,
 };
-
-int rseq_has_sys_membarrier;
 
 static int sys_rseq(volatile struct rseq *rseq_abi, int flags)
 {
@@ -89,15 +80,6 @@ int rseq_fallback_current_cpu(void)
 		abort();
 	}
 	return cpu;
-}
-
-void __attribute__((constructor)) rseq_init(void)
-{
-	int ret;
-
-	ret = membarrier(MEMBARRIER_CMD_QUERY, 0);
-	if (ret >= 0 && (ret & MEMBARRIER_CMD_SHARED))
-		rseq_has_sys_membarrier = 1;
 }
 
 int rseq_op_cmpstore(void *v, void *expect, void *n, size_t len, int cpu)
