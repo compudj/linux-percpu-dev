@@ -164,6 +164,188 @@ static int test_compare_ne_diff(void)
 	return 0;
 }
 
+static int test_2compare_eq_op(char *a, char *b, char *c, char *d,
+		size_t len)
+{
+	struct rseq_op opvec[] = {
+		[0] = {
+			.op = RSEQ_COMPARE_EQ_OP,
+			.len = len,
+			.u.compare_op.a = (unsigned long)a,
+			.u.compare_op.b = (unsigned long)b,
+		},
+		[1] = {
+			.op = RSEQ_COMPARE_EQ_OP,
+			.len = len,
+			.u.compare_op.a = (unsigned long)c,
+			.u.compare_op.b = (unsigned long)d,
+		},
+	};
+	int ret, cpu;
+
+	do {
+		cpu = rseq_fallback_current_cpu();
+		ret = rseq_op(opvec, ARRAY_SIZE(opvec), cpu, 0);
+	} while (ret == -1 && errno == EAGAIN);
+
+	return ret;
+}
+
+static int test_2compare_eq_index(void)
+{
+	int i, ret;
+	char buf1[TESTBUFLEN];
+	char buf2[TESTBUFLEN];
+	char buf3[TESTBUFLEN];
+	char buf4[TESTBUFLEN];
+	const char *test_name = "test_2compare_eq index";
+
+	printf("Testing %s\n", test_name);
+
+	for (i = 0; i < TESTBUFLEN; i++)
+		buf1[i] = (char)i;
+	memset(buf2, 0, TESTBUFLEN);
+	memset(buf3, 0, TESTBUFLEN);
+	memset(buf4, 0, TESTBUFLEN);
+
+	/* First compare failure is op[0], expect 1. */
+	ret = test_2compare_eq_op(buf2, buf1, buf4, buf3, TESTBUFLEN);
+	if (ret < 0) {
+		printf("%s returned with %d, errno: %s\n",
+			test_name, ret, strerror(errno));
+		exit(-1);
+	}
+	if (ret != 1) {
+		printf("%s returned %d, expecting %d\n",
+			test_name, ret, 1);
+		return -1;
+	}
+
+	/* All compares succeed. */
+	for (i = 0; i < TESTBUFLEN; i++)
+		buf2[i] = (char)i;
+	ret = test_2compare_eq_op(buf2, buf1, buf4, buf3, TESTBUFLEN);
+	if (ret < 0) {
+		printf("%s returned with %d, errno: %s\n",
+			test_name, ret, strerror(errno));
+		exit(-1);
+	}
+	if (ret != 0) {
+		printf("%s returned %d, expecting %d\n",
+			test_name, ret, 0);
+		return -1;
+	}
+
+	/* First compare failure is op[1], expect 2. */
+	for (i = 0; i < TESTBUFLEN; i++)
+		buf3[i] = (char)i;
+	ret = test_2compare_eq_op(buf2, buf1, buf4, buf3, TESTBUFLEN);
+	if (ret < 0) {
+		printf("%s returned with %d, errno: %s\n",
+			test_name, ret, strerror(errno));
+		exit(-1);
+	}
+	if (ret != 2) {
+		printf("%s returned %d, expecting %d\n",
+			test_name, ret, 2);
+		return -1;
+	}
+
+	return 0;
+}
+
+static int test_2compare_ne_op(char *a, char *b, char *c, char *d,
+		size_t len)
+{
+	struct rseq_op opvec[] = {
+		[0] = {
+			.op = RSEQ_COMPARE_NE_OP,
+			.len = len,
+			.u.compare_op.a = (unsigned long)a,
+			.u.compare_op.b = (unsigned long)b,
+		},
+		[1] = {
+			.op = RSEQ_COMPARE_NE_OP,
+			.len = len,
+			.u.compare_op.a = (unsigned long)c,
+			.u.compare_op.b = (unsigned long)d,
+		},
+	};
+	int ret, cpu;
+
+	do {
+		cpu = rseq_fallback_current_cpu();
+		ret = rseq_op(opvec, ARRAY_SIZE(opvec), cpu, 0);
+	} while (ret == -1 && errno == EAGAIN);
+
+	return ret;
+}
+
+static int test_2compare_ne_index(void)
+{
+	int i, ret;
+	char buf1[TESTBUFLEN];
+	char buf2[TESTBUFLEN];
+	char buf3[TESTBUFLEN];
+	char buf4[TESTBUFLEN];
+	const char *test_name = "test_2compare_ne index";
+
+	printf("Testing %s\n", test_name);
+
+	memset(buf1, 0, TESTBUFLEN);
+	memset(buf2, 0, TESTBUFLEN);
+	memset(buf3, 0, TESTBUFLEN);
+	memset(buf4, 0, TESTBUFLEN);
+
+	/* First compare ne failure is op[0], expect 1. */
+	ret = test_2compare_ne_op(buf2, buf1, buf4, buf3, TESTBUFLEN);
+	if (ret < 0) {
+		printf("%s returned with %d, errno: %s\n",
+			test_name, ret, strerror(errno));
+		exit(-1);
+	}
+	if (ret != 1) {
+		printf("%s returned %d, expecting %d\n",
+			test_name, ret, 1);
+		return -1;
+	}
+
+	/* All compare ne succeed. */
+	for (i = 0; i < TESTBUFLEN; i++)
+		buf1[i] = (char)i;
+	for (i = 0; i < TESTBUFLEN; i++)
+		buf3[i] = (char)i;
+	ret = test_2compare_ne_op(buf2, buf1, buf4, buf3, TESTBUFLEN);
+	if (ret < 0) {
+		printf("%s returned with %d, errno: %s\n",
+			test_name, ret, strerror(errno));
+		exit(-1);
+	}
+	if (ret != 0) {
+		printf("%s returned %d, expecting %d\n",
+			test_name, ret, 0);
+		return -1;
+	}
+
+	/* First compare failure is op[1], expect 2. */
+	for (i = 0; i < TESTBUFLEN; i++)
+		buf4[i] = (char)i;
+	ret = test_2compare_ne_op(buf2, buf1, buf4, buf3, TESTBUFLEN);
+	if (ret < 0) {
+		printf("%s returned with %d, errno: %s\n",
+			test_name, ret, strerror(errno));
+		exit(-1);
+	}
+	if (ret != 2) {
+		printf("%s returned %d, expecting %d\n",
+			test_name, ret, 2);
+		return -1;
+	}
+
+	return 0;
+}
+
+
 static int test_memcpy_op(void *dst, void *src, size_t len)
 {
 	struct rseq_op opvec[] = {
@@ -654,6 +836,8 @@ int main(int argc, char **argv)
 	ret |= test_compare_eq_diff();
 	ret |= test_compare_ne_same();
 	ret |= test_compare_ne_diff();
+	ret |= test_2compare_eq_index();
+	ret |= test_2compare_ne_index();
 	ret |= test_memcpy();
 	ret |= test_memcpy_u32();
 	ret |= test_add();
