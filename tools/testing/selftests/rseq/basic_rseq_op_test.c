@@ -139,46 +139,26 @@ static int test_memcpy(void)
 	return 0;
 }
 
-static int test_store_op(void *dst, void *src, size_t len)
-{
-	struct rseq_op opvec[] = {
-		[0] = {
-			.op = RSEQ_STORE_OP,
-			.len = len,
-			.u.memcpy_op.dst = (unsigned long)dst,
-			.u.memcpy_op.src = (unsigned long)src,
-		},
-	};
-	int ret, cpu;
-
-	do {
-		cpu = rseq_fallback_current_cpu();
-		ret = rseq_op(opvec, ARRAY_SIZE(opvec), cpu, 0);
-	} while (ret == -1 && errno == EAGAIN);
-
-	return ret;
-}
-
-static int test_store(void)
+static int test_memcpy_u32(void)
 {
 	int ret;
-	uint64_t v1, v2;
-	const char *test_name = "test_store";
+	uint32_t v1, v2;
+	const char *test_name = "test_memcpy_u32";
 
 	printf("Testing %s\n", test_name);
 
-	/* Test store */
+	/* Test memcpy_u32 */
 	v1 = 42;
 	v2 = 0;
-	ret = test_store_op(&v2, &v1, sizeof(v1));
+	ret = test_memcpy_op(&v2, &v1, sizeof(v1));
 	if (ret) {
 		printf("%s returned with %d, errno: %s\n",
 			test_name, ret, strerror(errno));
 		exit(-1);
 	}
 	if (v1 != v2) {
-		printf("%s failed. Expecting '%lld', found '%lld'\n",
-			test_name, (long long)v1, (long long)v2);
+		printf("%s failed. Expecting '%d', found '%d'\n",
+			test_name, v1, v2);
 		return -1;
 	}
 	return 0;
@@ -416,13 +396,13 @@ static int test_cmpxchg_op(void *v, void *expect, void *old, void *n,
 			.u.compare_op.b = (unsigned long)expect,
 		},
 		[1] = {
-			.op = RSEQ_STORE_OP,
+			.op = RSEQ_MEMCPY_OP,
 			.len = len,
 			.u.memcpy_op.dst = (unsigned long)old,
 			.u.memcpy_op.src = (unsigned long)v,
 		},
 		[2] = {
-			.op = RSEQ_STORE_OP,
+			.op = RSEQ_MEMCPY_OP,
 			.len = len,
 			.u.memcpy_op.dst = (unsigned long)v,
 			.u.memcpy_op.src = (unsigned long)n,
@@ -512,7 +492,7 @@ int main(int argc, char **argv)
 	ret |= test_compare_eq_same();
 	ret |= test_compare_eq_diff();
 	ret |= test_memcpy();
-	ret |= test_store();
+	ret |= test_memcpy_u32();
 	ret |= test_add();
 	ret |= test_two_add();
 	ret |= test_or();
