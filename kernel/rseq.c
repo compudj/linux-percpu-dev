@@ -516,6 +516,15 @@ static int rseq_op_vec_pin_pages(struct rseq_op *rseqop, int rseqopcnt,
 			if (ret)
 				goto error;
 			break;
+		case RSEQ_LSHIFT_OP:
+		case RSEQ_RSHIFT_OP:
+			if (!access_ok(VERIFY_WRITE, op->u.shift_op.p, op->len))
+				goto error;
+			ret = rseq_op_pin_pages((unsigned long)op->u.shift_op.p,
+					op->len, pinned_pages_ptr, nr_pinned);
+			if (ret)
+				goto error;
+			break;
 		default:
 			return -EINVAL;
 		}
