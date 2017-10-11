@@ -371,6 +371,7 @@ static int rseq_op_vec_check(struct rseq_op *rseqop, int rseqopcnt)
 			if (op->len > RSEQ_OP_DATA_LEN_MAX)
 				return -EINVAL;
 			break;
+		case RSEQ_STORE_OP:
 		case RSEQ_ADD_OP:
 		case RSEQ_OR_OP:
 		case RSEQ_AND_OP:
@@ -471,6 +472,7 @@ static int rseq_op_vec_pin_pages(struct rseq_op *rseqop, int rseqopcnt,
 				goto error;
 			break;
 		case RSEQ_MEMCPY_OP:
+		case RSEQ_STORE_OP:
 			if (!access_ok(VERIFY_WRITE, op->u.memcpy_op.src, op->len))
 				goto error;
 			ret = rseq_op_pin_pages((unsigned long)op->u.memcpy_op.dst,
@@ -560,8 +562,9 @@ static int __rseq_do_op_memcpy(void __user *dst, void __user *src, uint32_t len)
 }
 
 /* Return 0 on success, < 0 on error. */
-static int __rseq_do_op_add(void __user *p, int64_t count, uint32_t len)
+static int __rseq_do_op_store(void __user *dst, void __user *src, uint32_t len)
 {
+	int ret = -EFAULT;
 	union {
 		uint8_t _u8;
 		uint16_t _u16;
@@ -569,32 +572,98 @@ static int __rseq_do_op_add(void __user *p, int64_t count, uint32_t len)
 		uint64_t _u64;
 	} tmp;
 
-	if (__copy_from_user_inatomic(&tmp, p, len))
-		return -EFAULT;
+	pagefault_disable();
 	switch (len) {
 	case 1:
-		tmp._u8 += (uint8_t)count;
+		if (__get_user(tmp._u8, (uint8_t __user *)src))
+			goto end;
+		if (__put_user(tmp._u8, (uint8_t __user *)dst))
+			goto end;
 		break;
 	case 2:
-		tmp._u16 += (uint16_t)count;
+		if (__get_user(tmp._u16, (uint16_t __user *)src))
+			goto end;
+		if (__put_user(tmp._u16, (uint16_t __user *)dst))
+			goto end;
 		break;
 	case 4:
-		tmp._u32 += (uint32_t)count;
+		if (__get_user(tmp._u32, (uint32_t __user *)src))
+			goto end;
+		if (__put_user(tmp._u32, (uint32_t __user *)dst))
+			goto end;
 		break;
 	case 8:
-		tmp._u64 += (uint64_t)count;
+		if (__get_user(tmp._u64, (uint64_t __user *)src))
+			goto end;
+		if (__put_user(tmp._u64, (uint64_t __user *)dst))
+			goto end;
 		break;
 	default:
-		return -EINVAL;
+		ret = -EINVAL;
+		goto end;
 	}
-	if (__copy_to_user_inatomic(p, &tmp, len))
-		return -EFAULT;
-	return 0;
+	ret = 0;
+end:
+	pagefault_disable();
+	return ret;
+}
+
+
+/* Return 0 on success, < 0 on error. */
+static int __rseq_do_op_add(void __user *p, int64_t count, uint32_t len)
+{
+	int ret = -EFAULT;
+	union {
+		uint8_t _u8;
+		uint16_t _u16;
+		uint32_t _u32;
+		uint64_t _u64;
+	} tmp;
+
+	pagefault_disable();
+	switch (len) {
+	case 1:
+		if (__get_user(tmp._u8, (uint8_t __user *)p))
+			goto end;
+		tmp._u8 += (uint8_t)count;
+		if (__put_user(tmp._u8, (uint8_t __user *)p))
+			goto end;
+		break;
+	case 2:
+		if (__get_user(tmp._u16, (uint16_t __user *)p))
+			goto end;
+		tmp._u16 += (uint16_t)count;
+		if (__put_user(tmp._u16, (uint16_t __user *)p))
+			goto end;
+		break;
+	case 4:
+		if (__get_user(tmp._u32, (uint32_t __user *)p))
+			goto end;
+		tmp._u32 += (uint32_t)count;
+		if (__put_user(tmp._u32, (uint32_t __user *)p))
+			goto end;
+		break;
+	case 8:
+		if (__get_user(tmp._u64, (uint64_t __user *)p))
+			goto end;
+		tmp._u64 += (uint64_t)count;
+		if (__put_user(tmp._u64, (uint64_t __user *)p))
+			goto end;
+		break;
+	default:
+		ret = -EINVAL;
+		goto end;
+	}
+	ret = 0;
+end:
+	pagefault_disable();
+	return ret;
 }
 
 /* Return 0 on success, < 0 on error. */
 static int __rseq_do_op_or(void __user *p, uint64_t mask, uint32_t len)
 {
+	int ret = -EFAULT;
 	union {
 		uint8_t _u8;
 		uint16_t _u16;
@@ -602,32 +671,50 @@ static int __rseq_do_op_or(void __user *p, uint64_t mask, uint32_t len)
 		uint64_t _u64;
 	} tmp;
 
-	if (__copy_from_user_inatomic(&tmp, p, len))
-		return -EFAULT;
+	pagefault_disable();
 	switch (len) {
 	case 1:
+		if (__get_user(tmp._u8, (uint8_t __user *)p))
+			goto end;
 		tmp._u8 |= (uint8_t)mask;
+		if (__put_user(tmp._u8, (uint8_t __user *)p))
+			goto end;
 		break;
 	case 2:
+		if (__get_user(tmp._u16, (uint16_t __user *)p))
+			goto end;
 		tmp._u16 |= (uint16_t)mask;
+		if (__put_user(tmp._u16, (uint16_t __user *)p))
+			goto end;
 		break;
 	case 4:
+		if (__get_user(tmp._u32, (uint32_t __user *)p))
+			goto end;
 		tmp._u32 |= (uint32_t)mask;
+		if (__put_user(tmp._u32, (uint32_t __user *)p))
+			goto end;
 		break;
 	case 8:
+		if (__get_user(tmp._u64, (uint64_t __user *)p))
+			goto end;
 		tmp._u64 |= (uint64_t)mask;
+		if (__put_user(tmp._u64, (uint64_t __user *)p))
+			goto end;
 		break;
 	default:
-		return -EINVAL;
+		ret = -EINVAL;
+		goto end;
 	}
-	if (__copy_to_user_inatomic(p, &tmp, len))
-		return -EFAULT;
-	return 0;
+	ret = 0;
+end:
+	pagefault_disable();
+	return ret;
 }
 
 /* Return 0 on success, < 0 on error. */
 static int __rseq_do_op_and(void __user *p, uint64_t mask, uint32_t len)
 {
+	int ret = -EFAULT;
 	union {
 		uint8_t _u8;
 		uint16_t _u16;
@@ -635,32 +722,50 @@ static int __rseq_do_op_and(void __user *p, uint64_t mask, uint32_t len)
 		uint64_t _u64;
 	} tmp;
 
-	if (__copy_from_user_inatomic(&tmp, p, len))
-		return -EFAULT;
+	pagefault_disable();
 	switch (len) {
 	case 1:
+		if (__get_user(tmp._u8, (uint8_t __user *)p))
+			goto end;
 		tmp._u8 &= (uint8_t)mask;
+		if (__put_user(tmp._u8, (uint8_t __user *)p))
+			goto end;
 		break;
 	case 2:
+		if (__get_user(tmp._u16, (uint16_t __user *)p))
+			goto end;
 		tmp._u16 &= (uint16_t)mask;
+		if (__put_user(tmp._u16, (uint16_t __user *)p))
+			goto end;
 		break;
 	case 4:
+		if (__get_user(tmp._u32, (uint32_t __user *)p))
+			goto end;
 		tmp._u32 &= (uint32_t)mask;
+		if (__put_user(tmp._u32, (uint32_t __user *)p))
+			goto end;
 		break;
 	case 8:
+		if (__get_user(tmp._u64, (uint64_t __user *)p))
+			goto end;
 		tmp._u64 &= (uint64_t)mask;
+		if (__put_user(tmp._u64, (uint64_t __user *)p))
+			goto end;
 		break;
 	default:
-		return -EINVAL;
+		ret = -EINVAL;
+		goto end;
 	}
-	if (__copy_to_user_inatomic(p, &tmp, len))
-		return -EFAULT;
-	return 0;
+	ret = 0;
+end:
+	pagefault_disable();
+	return ret;
 }
 
 /* Return 0 on success, < 0 on error. */
 static int __rseq_do_op_xor(void __user *p, uint64_t mask, uint32_t len)
 {
+	int ret = -EFAULT;
 	union {
 		uint8_t _u8;
 		uint16_t _u16;
@@ -668,32 +773,50 @@ static int __rseq_do_op_xor(void __user *p, uint64_t mask, uint32_t len)
 		uint64_t _u64;
 	} tmp;
 
-	if (__copy_from_user_inatomic(&tmp, p, len))
-		return -EFAULT;
+	pagefault_disable();
 	switch (len) {
 	case 1:
+		if (__get_user(tmp._u8, (uint8_t __user *)p))
+			goto end;
 		tmp._u8 ^= (uint8_t)mask;
+		if (__put_user(tmp._u8, (uint8_t __user *)p))
+			goto end;
 		break;
 	case 2:
+		if (__get_user(tmp._u16, (uint16_t __user *)p))
+			goto end;
 		tmp._u16 ^= (uint16_t)mask;
+		if (__put_user(tmp._u16, (uint16_t __user *)p))
+			goto end;
 		break;
 	case 4:
+		if (__get_user(tmp._u32, (uint32_t __user *)p))
+			goto end;
 		tmp._u32 ^= (uint32_t)mask;
+		if (__put_user(tmp._u32, (uint32_t __user *)p))
+			goto end;
 		break;
 	case 8:
+		if (__get_user(tmp._u64, (uint64_t __user *)p))
+			goto end;
 		tmp._u64 ^= (uint64_t)mask;
+		if (__put_user(tmp._u64, (uint64_t __user *)p))
+			goto end;
 		break;
 	default:
-		return -EINVAL;
+		ret = -EINVAL;
+		goto end;
 	}
-	if (__copy_to_user_inatomic(p, &tmp, len))
-		return -EFAULT;
-	return 0;
+	ret = 0;
+end:
+	pagefault_disable();
+	return ret;
 }
 
 /* Return 0 on success, < 0 on error. */
 static int __rseq_do_op_lshift(void __user *p, uint32_t bits, uint32_t len)
 {
+	int ret = -EFAULT;
 	union {
 		uint8_t _u8;
 		uint16_t _u16;
@@ -701,32 +824,50 @@ static int __rseq_do_op_lshift(void __user *p, uint32_t bits, uint32_t len)
 		uint64_t _u64;
 	} tmp;
 
-	if (__copy_from_user_inatomic(&tmp, p, len))
-		return -EFAULT;
+	pagefault_disable();
 	switch (len) {
 	case 1:
+		if (__get_user(tmp._u8, (uint8_t __user *)p))
+			goto end;
 		tmp._u8 <<= (uint8_t)bits;
+		if (__put_user(tmp._u8, (uint8_t __user *)p))
+			goto end;
 		break;
 	case 2:
+		if (__get_user(tmp._u16, (uint16_t __user *)p))
+			goto end;
 		tmp._u16 <<= (uint16_t)bits;
+		if (__put_user(tmp._u16, (uint16_t __user *)p))
+			goto end;
 		break;
 	case 4:
+		if (__get_user(tmp._u32, (uint32_t __user *)p))
+			goto end;
 		tmp._u32 <<= (uint32_t)bits;
+		if (__put_user(tmp._u32, (uint32_t __user *)p))
+			goto end;
 		break;
 	case 8:
+		if (__get_user(tmp._u64, (uint64_t __user *)p))
+			goto end;
 		tmp._u64 <<= (uint64_t)bits;
+		if (__put_user(tmp._u64, (uint64_t __user *)p))
+			goto end;
 		break;
 	default:
-		return -EINVAL;
+		ret = -EINVAL;
+		goto end;
 	}
-	if (__copy_to_user_inatomic(p, &tmp, len))
-		return -EFAULT;
-	return 0;
+	ret = 0;
+end:
+	pagefault_disable();
+	return ret;
 }
 
 /* Return 0 on success, < 0 on error. */
 static int __rseq_do_op_rshift(void __user *p, uint32_t bits, uint32_t len)
 {
+	int ret = -EFAULT;
 	union {
 		uint8_t _u8;
 		uint16_t _u16;
@@ -734,27 +875,44 @@ static int __rseq_do_op_rshift(void __user *p, uint32_t bits, uint32_t len)
 		uint64_t _u64;
 	} tmp;
 
-	if (__copy_from_user_inatomic(&tmp, p, len))
-		return -EFAULT;
+	pagefault_disable();
 	switch (len) {
 	case 1:
+		if (__get_user(tmp._u8, (uint8_t __user *)p))
+			goto end;
 		tmp._u8 >>= (uint8_t)bits;
+		if (__put_user(tmp._u8, (uint8_t __user *)p))
+			goto end;
 		break;
 	case 2:
+		if (__get_user(tmp._u16, (uint16_t __user *)p))
+			goto end;
 		tmp._u16 >>= (uint16_t)bits;
+		if (__put_user(tmp._u16, (uint16_t __user *)p))
+			goto end;
 		break;
 	case 4:
+		if (__get_user(tmp._u32, (uint32_t __user *)p))
+			goto end;
 		tmp._u32 >>= (uint32_t)bits;
+		if (__put_user(tmp._u32, (uint32_t __user *)p))
+			goto end;
 		break;
 	case 8:
+		if (__get_user(tmp._u64, (uint64_t __user *)p))
+			goto end;
 		tmp._u64 >>= (uint64_t)bits;
+		if (__put_user(tmp._u64, (uint64_t __user *)p))
+			goto end;
 		break;
 	default:
-		return -EINVAL;
+		ret = -EINVAL;
+		goto end;
 	}
-	if (__copy_to_user_inatomic(p, &tmp, len))
-		return -EFAULT;
-	return 0;
+	ret = 0;
+end:
+	pagefault_disable();
+	return ret;
 }
 
 static int __rseq_do_op_vec(struct rseq_op *rseqop, int rseqopcnt)
@@ -776,6 +934,15 @@ static int __rseq_do_op_vec(struct rseq_op *rseqop, int rseqopcnt)
 			break;
 		case RSEQ_MEMCPY_OP:
 			ret = __rseq_do_op_memcpy(
+					(void __user *)op->u.memcpy_op.dst,
+					(void __user *)op->u.memcpy_op.src,
+					op->len);
+			/* Stop execution on error. */
+			if (ret)
+				return ret;
+			break;
+		case RSEQ_STORE_OP:
+			ret = __rseq_do_op_store(
 					(void __user *)op->u.memcpy_op.dst,
 					(void __user *)op->u.memcpy_op.src,
 					op->len);
