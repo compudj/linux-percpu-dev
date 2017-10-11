@@ -29,8 +29,6 @@ static int opt_yield, opt_signal, opt_sleep, opt_fallback_cnt = 3,
 
 static __thread unsigned int signals_delivered;
 
-static struct rseq_lock rseq_lock;
-
 #ifndef BENCHMARK
 
 static __thread unsigned int yield_mod_cnt, nr_retry;
@@ -273,10 +271,8 @@ void *test_percpu_spinlock_thread(void *arg)
 			printf("tid %d: count %d\n", (int) gettid(), i);
 #endif
 	}
-	printf_nobench("tid %d: number of retry: %d, signals delivered: %u, nr_fallback %u, nr_fallback_wait %u\n",
-		(int) gettid(), nr_retry, signals_delivered,
-		rseq_get_fallback_cnt(),
-		rseq_get_fallback_wait_cnt());
+	printf_nobench("tid %d: number of retry: %d, signals delivered: %u\n",
+		(int) gettid(), nr_retry, signals_delivered);
 	if (rseq_unregister_current_thread())
 		abort();
 	return NULL;
@@ -368,10 +364,8 @@ void *test_percpu_inc_thread(void *arg)
 			printf("tid %d: count %d\n", (int) gettid(), i);
 #endif
 	}
-	printf_nobench("tid %d: number of retry: %d, signals delivered: %u, nr_fallback %u, nr_fallback_wait %u\n",
-		(int) gettid(), nr_retry, signals_delivered,
-		rseq_get_fallback_cnt(),
-		rseq_get_fallback_wait_cnt());
+	printf_nobench("tid %d: number of retry: %d, signals delivered: %u\n",
+		(int) gettid(), nr_retry, signals_delivered);
 	if (rseq_unregister_current_thread())
 		abort();
 	return NULL;
@@ -1063,10 +1057,6 @@ int main(int argc, char **argv)
 {
 	int i;
 
-	if (rseq_init_lock(&rseq_lock)) {
-		perror("rseq_init_lock");
-		return -1;
-	}
 	if (set_signal_handler())
 		goto error;
 	for (i = 1; i < argc; i++) {
@@ -1228,7 +1218,5 @@ end:
 	return 0;
 
 error:
-	if (rseq_destroy_lock(&rseq_lock))
-		perror("rseq_destroy_lock");
 	return -1;
 }

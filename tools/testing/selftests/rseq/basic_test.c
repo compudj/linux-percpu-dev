@@ -14,7 +14,6 @@
 
 volatile int signals_delivered;
 volatile __thread struct rseq_state sigtest_start;
-static struct rseq_lock rseq_lock;
 
 void test_cpu_pointer(void)
 {
@@ -45,10 +44,10 @@ void test_critical_section(void)
 	struct rseq_state start;
 	uint32_t event_counter;
 
-	start = rseq_start_rlock(&rseq_lock);
+	start = rseq_start();
 	event_counter = start.event_counter;
 	do {
-		start = rseq_start_rlock(&rseq_lock);
+		start = rseq_start();
 	} while (start.event_counter == event_counter);
 }
 
@@ -56,7 +55,7 @@ void test_signal_interrupt_handler(int signo)
 {
 	struct rseq_state current;
 
-	current = rseq_start_rlock(&rseq_lock);
+	current = rseq_start();
 	/*
 	 * The potential critical section bordered by 'start' must be
 	 * invalid.
@@ -74,17 +73,13 @@ void test_signal_interrupts(void)
 	signal(SIGPROF, test_signal_interrupt_handler);
 
 	do {
-		sigtest_start = rseq_start_rlock(&rseq_lock);
+		sigtest_start = rseq_start();
 	} while (signals_delivered < 10);
 	setitimer(ITIMER_PROF, &stop_it, NULL);
 }
 
 int main(int argc, char **argv)
 {
-	if (rseq_init_lock(&rseq_lock)) {
-		perror("rseq_init_lock");
-		return -1;
-	}
 	if (rseq_register_current_thread())
 		goto init_thread_error;
 	printf("testing current cpu\n");
@@ -95,14 +90,8 @@ int main(int argc, char **argv)
 	test_signal_interrupts();
 	if (rseq_unregister_current_thread())
 		goto init_thread_error;
-	if (rseq_destroy_lock(&rseq_lock)) {
-		perror("rseq_destroy_lock");
-		return -1;
-	}
 	return 0;
 
 init_thread_error:
-	if (rseq_destroy_lock(&rseq_lock))
-		perror("rseq_destroy_lock");
 	return -1;
 }

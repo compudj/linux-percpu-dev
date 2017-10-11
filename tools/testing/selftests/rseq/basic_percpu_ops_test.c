@@ -11,8 +11,6 @@
 
 #define ARRAY_SIZE(arr)	(sizeof(arr) / sizeof((arr)[0]))
 
-static struct rseq_lock rseq_lock;
-
 struct percpu_lock_entry {
 	intptr_t v;
 } __attribute__((aligned(128)));
@@ -302,10 +300,6 @@ void test_percpu_list(void)
 
 int main(int argc, char **argv)
 {
-	if (rseq_init_lock(&rseq_lock)) {
-		perror("rseq_init_lock");
-		return -1;
-	}
 	if (rseq_register_current_thread())
 		goto error;
 	printf("spinlock\n");
@@ -314,15 +308,9 @@ int main(int argc, char **argv)
 	test_percpu_list();
 	if (rseq_unregister_current_thread())
 		goto error;
-	if (rseq_destroy_lock(&rseq_lock)) {
-		perror("rseq_destroy_lock");
-		return -1;
-	}
 	return 0;
 
 error:
-	if (rseq_destroy_lock(&rseq_lock))
-		perror("rseq_destroy_lock");
 	return -1;
 }
 
