@@ -32,6 +32,8 @@
 #include <linux/types.h>
 #include <asm/ptrace.h>
 
+#include "sched/sched.h"
+
 #define CREATE_TRACE_POINTS
 #include <trace/events/rseq.h>
 
@@ -1051,6 +1053,11 @@ static int rseq_do_op_vec(struct rseq_op *rseqop, int rseqopcnt, int cpu)
 {
 	int ret;
 
+	if (cpu != raw_smp_processor_id()) {
+		ret = push_task_to_cpu(current, cpu);
+		if (ret)
+			return ret;
+	}
 	preempt_disable();
 	if (cpu != smp_processor_id()) {
 		ret = -EAGAIN;
@@ -1078,6 +1085,8 @@ SYSCALL_DEFINE4(rseq_op, struct rseq_op __user *, urseqop, int, rseqopcnt,
 	size_t nr_pinned = 0;
 
 	if (unlikely(flags))
+		return -EINVAL;
+	if (unlikely(cpu < 0))
 		return -EINVAL;
 	if (rseqopcnt < 0 || rseqopcnt > RSEQ_OP_VEC_LEN_MAX)
 		return -EINVAL;
