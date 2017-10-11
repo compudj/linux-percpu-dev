@@ -90,6 +90,80 @@ static int test_compare_eq_diff(void)
 	return 0;
 }
 
+static int test_compare_ne_op(char *a, char *b, size_t len)
+{
+	struct rseq_op opvec[] = {
+		[0] = {
+			.op = RSEQ_COMPARE_NE_OP,
+			.len = len,
+			.u.compare_op.a = (unsigned long)a,
+			.u.compare_op.b = (unsigned long)b,
+		},
+	};
+	int ret, cpu;
+
+	do {
+		cpu = rseq_fallback_current_cpu();
+		ret = rseq_op(opvec, ARRAY_SIZE(opvec), cpu, 0);
+	} while (ret == -1 && errno == EAGAIN);
+
+	return ret;
+}
+
+static int test_compare_ne_same(void)
+{
+	int i, ret;
+	char buf1[TESTBUFLEN];
+	char buf2[TESTBUFLEN];
+	const char *test_name = "test_compare_ne same";
+
+	printf("Testing %s\n", test_name);
+
+	/* Test compare_ne */
+	for (i = 0; i < TESTBUFLEN; i++)
+		buf1[i] = (char)i;
+	for (i = 0; i < TESTBUFLEN; i++)
+		buf2[i] = (char)i;
+	ret = test_compare_ne_op(buf2, buf1, TESTBUFLEN);
+	if (ret < 0) {
+		printf("%s returned with %d, errno: %s\n",
+			test_name, ret, strerror(errno));
+		exit(-1);
+	}
+	if (ret == 0) {
+		printf("%s returned %d, expecting %d\n",
+			test_name, ret, 1);
+		return -1;
+	}
+	return 0;
+}
+
+static int test_compare_ne_diff(void)
+{
+	int i, ret;
+	char buf1[TESTBUFLEN];
+	char buf2[TESTBUFLEN];
+	const char *test_name = "test_compare_ne different";
+
+	printf("Testing %s\n", test_name);
+
+	for (i = 0; i < TESTBUFLEN; i++)
+		buf1[i] = (char)i;
+	memset(buf2, 0, TESTBUFLEN);
+	ret = test_compare_ne_op(buf2, buf1, TESTBUFLEN);
+	if (ret < 0) {
+		printf("%s returned with %d, errno: %s\n",
+			test_name, ret, strerror(errno));
+		exit(-1);
+	}
+	if (ret != 0) {
+		printf("%s returned %d, expecting %d\n",
+			test_name, ret, 0);
+		return -1;
+	}
+	return 0;
+}
+
 static int test_memcpy_op(void *dst, void *src, size_t len)
 {
 	struct rseq_op opvec[] = {
@@ -491,6 +565,8 @@ int main(int argc, char **argv)
 
 	ret |= test_compare_eq_same();
 	ret |= test_compare_eq_diff();
+	ret |= test_compare_ne_same();
+	ret |= test_compare_ne_diff();
 	ret |= test_memcpy();
 	ret |= test_memcpy_u32();
 	ret |= test_add();
