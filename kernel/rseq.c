@@ -485,7 +485,7 @@ static int rseq_op_vec_pin_pages(struct rseq_op *rseqop, int rseqopcnt,
 				goto error;
 			break;
 		case RSEQ_MEMCPY_OP:
-			if (!access_ok(VERIFY_WRITE, op->u.memcpy_op.src, op->len))
+			if (!access_ok(VERIFY_WRITE, op->u.memcpy_op.dst, op->len))
 				goto error;
 			ret = rseq_op_pin_pages((unsigned long)op->u.memcpy_op.dst,
 					op->len, pinned_pages_ptr, nr_pinned);
@@ -544,11 +544,9 @@ static int __rseq_do_op_compare_iter(void __user *a, void __user *b, uint32_t le
 	char bufa[TMP_BUFLEN], bufb[TMP_BUFLEN];
 	uint32_t compared = 0;
 
-	for (;;) {
+	while (compared != len) {
 		unsigned long to_compare;
 
-		if (compared == len)
-			break;
 		to_compare = min_t(uint32_t, TMP_BUFLEN, len - compared);
 		if (__copy_from_user_inatomic(bufa, a + compared, to_compare))
 			return -EFAULT;
@@ -617,11 +615,9 @@ static int __rseq_do_op_memcpy_iter(void __user *dst, void __user *src, uint32_t
 	char buf[TMP_BUFLEN];
 	uint32_t copied = 0;
 
-	for (;;) {
+	while (copied != len) {
 		unsigned long to_copy;
 
-		if (copied == len)
-			break;
 		to_copy = min_t(uint32_t, TMP_BUFLEN, len - copied);
 		if (__copy_from_user_inatomic(buf, src + copied, to_copy))
 			return -EFAULT;
