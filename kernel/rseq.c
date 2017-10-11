@@ -372,7 +372,6 @@ static int rseq_op_vec_check(struct rseq_op *rseqop, int rseqopcnt)
 			if (op->len > RSEQ_OP_DATA_LEN_MAX)
 				return -EINVAL;
 			break;
-		case RSEQ_STORE_OP:
 		case RSEQ_ADD_OP:
 		case RSEQ_OR_OP:
 		case RSEQ_AND_OP:
@@ -482,7 +481,6 @@ static int rseq_op_vec_pin_pages(struct rseq_op *rseqop, int rseqopcnt,
 				goto error;
 			break;
 		case RSEQ_MEMCPY_OP:
-		case RSEQ_STORE_OP:
 			if (!access_ok(VERIFY_WRITE, op->u.memcpy_op.src, op->len))
 				goto error;
 			ret = rseq_op_pin_pages((unsigned long)op->u.memcpy_op.dst,
@@ -528,7 +526,7 @@ error:
 }
 
 /* Return 0 if same, > 0 if different, < 0 on error. */
-static int __rseq_do_op_compare_copy(void __user *a, void __user *b, uint32_t len)
+static int __rseq_do_op_compare_iter(void __user *a, void __user *b, uint32_t len)
 {
 	char bufa[TMP_BUFLEN], bufb[TMP_BUFLEN];
 	uint32_t compared = 0;
@@ -593,7 +591,7 @@ static int __rseq_do_op_compare(void __user *a, void __user *b, uint32_t len)
 		break;
 	default:
 		pagefault_enable();
-		return __rseq_do_op_compare_copy(a, b, len);
+		return __rseq_do_op_compare_iter(a, b, len);
 	}
 end:
 	pagefault_enable();
@@ -601,7 +599,7 @@ end:
 }
 
 /* Return 0 on success, < 0 on error. */
-static int __rseq_do_op_memcpy(void __user *dst, void __user *src, uint32_t len)
+static int __rseq_do_op_memcpy_iter(void __user *dst, void __user *src, uint32_t len)
 {
 	char buf[TMP_BUFLEN];
 	uint32_t copied = 0;
@@ -622,7 +620,7 @@ static int __rseq_do_op_memcpy(void __user *dst, void __user *src, uint32_t len)
 }
 
 /* Return 0 on success, < 0 on error. */
-static int __rseq_do_op_store(void __user *dst, void __user *src, uint32_t len)
+static int __rseq_do_op_memcpy(void __user *dst, void __user *src, uint32_t len)
 {
 	int ret = -EFAULT;
 	union {
@@ -659,15 +657,14 @@ static int __rseq_do_op_store(void __user *dst, void __user *src, uint32_t len)
 			goto end;
 		break;
 	default:
-		ret = -EINVAL;
-		goto end;
+		pagefault_enable();
+		return __rseq_do_op_memcpy_iter(dst, src, len);
 	}
 	ret = 0;
 end:
 	pagefault_enable();
 	return ret;
 }
-
 
 /* Return 0 on success, < 0 on error. */
 static int __rseq_do_op_add(void __user *p, int64_t count, uint32_t len)
@@ -994,15 +991,6 @@ static int __rseq_do_op_vec(struct rseq_op *rseqop, int rseqopcnt)
 			break;
 		case RSEQ_MEMCPY_OP:
 			ret = __rseq_do_op_memcpy(
-					(void __user *)op->u.memcpy_op.dst,
-					(void __user *)op->u.memcpy_op.src,
-					op->len);
-			/* Stop execution on error. */
-			if (ret)
-				return ret;
-			break;
-		case RSEQ_STORE_OP:
-			ret = __rseq_do_op_store(
 					(void __user *)op->u.memcpy_op.dst,
 					(void __user *)op->u.memcpy_op.src,
 					op->len);
