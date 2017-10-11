@@ -61,10 +61,6 @@
 #define RSEQ_INJECT_FAILED
 #endif
 
-#ifndef RSEQ_FALLBACK_CNT
-#define RSEQ_FALLBACK_CNT	3
-#endif
-
 extern __thread volatile struct rseq __rseq_abi;
 extern int rseq_has_sys_membarrier;
 

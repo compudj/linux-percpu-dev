@@ -23,7 +23,7 @@ static int loop_cnt[NR_INJECT + 1];
 
 static int opt_modulo;
 
-static int opt_yield, opt_signal, opt_sleep, opt_fallback_cnt = 3,
+static int opt_yield, opt_signal, opt_sleep,
 		opt_disable_rseq, opt_threads = 200,
 		opt_reps = 5000, opt_disable_mod = 0, opt_test = 's';
 
@@ -116,9 +116,6 @@ static __thread unsigned int yield_mod_cnt, nr_retry;
 		} \
 	} \
 }
-
-#define RSEQ_FALLBACK_CNT	\
-	opt_fallback_cnt
 
 #else
 
@@ -213,6 +210,7 @@ static int rseq_percpu_lock(struct percpu_lock *lock)
 	int cpu;
 
 	for (;;) {
+#ifndef SKIP_FASTPATH
 		struct rseq_state rseq_state;
 
 		/* Try fast path. */
@@ -222,7 +220,9 @@ static int rseq_percpu_lock(struct percpu_lock *lock)
 			continue;	/* Retry.*/
 		if (likely(rseq_finish(&lock->c[cpu].v, 1, rseq_state)))
 			break;
-		else {
+		else
+#endif
+		{
 			/* Fallback on rseq_op system call. */
 			intptr_t expect = 0, n = 1;
 			int ret;
@@ -336,16 +336,20 @@ void *test_percpu_inc_thread(void *arg)
 			&& rseq_register_current_thread())
 		abort();
 	for (i = 0; i < thread_data->reps; i++) {
+		int cpu;
+
+#ifndef SKIP_FASTPATH
 		struct rseq_state rseq_state;
 		intptr_t *targetptr, newval;
-		int cpu;
 
 		/* Try fast path. */
 		rseq_state = rseq_start();
 		cpu = rseq_cpu_at_start(rseq_state);
 		newval = (intptr_t)data->c[cpu].count + 1;
 		targetptr = (intptr_t *)&data->c[cpu].count;
-		if (unlikely(!rseq_finish(targetptr, newval, rseq_state))) {
+		if (unlikely(!rseq_finish(targetptr, newval, rseq_state)))
+#endif
+		{
 			for (;;) {
 				/* Fallback on rseq_op system call. */
 				int ret;
@@ -415,9 +419,10 @@ void test_percpu_inc(void)
 
 int percpu_list_push(struct percpu_list *list, struct percpu_list_node *node)
 {
-	struct rseq_state rseq_state;
 	intptr_t *targetptr, newval, expect;
 	int cpu;
+#ifndef SKIP_FASTPATH
+	struct rseq_state rseq_state;
 
 	/* Try fast path. */
 	rseq_state = rseq_start();
@@ -425,7 +430,9 @@ int percpu_list_push(struct percpu_list *list, struct percpu_list_node *node)
 	newval = (intptr_t)node;
 	targetptr = (intptr_t *)&list->c[cpu].head;
 	node->next = list->c[cpu].head;
-	if (unlikely(!rseq_finish(targetptr, newval, rseq_state))) {
+	if (unlikely(!rseq_finish(targetptr, newval, rseq_state)))
+#endif
+	{
 		/* Fallback on rseq_op system call. */
 		for (;;) {
 			int ret;
@@ -453,9 +460,10 @@ int percpu_list_push(struct percpu_list *list, struct percpu_list_node *node)
 struct percpu_list_node *percpu_list_pop(struct percpu_list *list)
 {
 	struct percpu_list_node *head, *next;
-	struct rseq_state rseq_state;
 	intptr_t *targetptr, newval, expect;
 	int cpu;
+#ifndef SKIP_FASTPATH
+	struct rseq_state rseq_state;
 
 	/* Try fast path. */
 	rseq_state = rseq_start();
@@ -466,7 +474,9 @@ struct percpu_list_node *percpu_list_pop(struct percpu_list *list)
 	next = head->next;
 	newval = (intptr_t)next;
 	targetptr = (intptr_t *)&list->c[cpu].head;
-	if (unlikely(!rseq_finish(targetptr, newval, rseq_state))) {
+	if (unlikely(!rseq_finish(targetptr, newval, rseq_state)))
+#endif
+	{
 		/* Fallback on rseq_op system call. */
 		for (;;) {
 			int ret;
@@ -591,11 +601,12 @@ void test_percpu_list(void)
 bool percpu_buffer_push(struct percpu_buffer *buffer,
 		struct percpu_buffer_node *node)
 {
-	struct rseq_state rseq_state;
 	intptr_t *targetptr_spec, newval_spec;
 	intptr_t *targetptr_final, newval_final;
 	int cpu;
 	intptr_t offset;
+#ifndef SKIP_FASTPATH
+	struct rseq_state rseq_state;
 
 	/* Try fast path. */
 	rseq_state = rseq_start();
@@ -608,7 +619,9 @@ bool percpu_buffer_push(struct percpu_buffer *buffer,
 	newval_final = offset + 1;
 	targetptr_final = &buffer->c[cpu].offset;
 	if (unlikely(!rseq_finish2(targetptr_spec, newval_spec,
-			targetptr_final, newval_final, rseq_state))) {
+			targetptr_final, newval_final, rseq_state)))
+#endif
+	{
 		/* Fallback on rseq_op system call. */
 		for (;;) {
 			int ret;
@@ -634,11 +647,12 @@ bool percpu_buffer_push(struct percpu_buffer *buffer,
 
 struct percpu_buffer_node *percpu_buffer_pop(struct percpu_buffer *buffer)
 {
-	struct rseq_state rseq_state;
 	struct percpu_buffer_node *head;
 	intptr_t *targetptr, newval;
 	int cpu;
 	intptr_t offset;
+#ifndef SKIP_FASTPATH
+	struct rseq_state rseq_state;
 
 	/* Try fast path. */
 	rseq_state = rseq_start();
@@ -649,7 +663,9 @@ struct percpu_buffer_node *percpu_buffer_pop(struct percpu_buffer *buffer)
 	head = buffer->c[cpu].array[offset - 1];
 	newval = offset - 1;
 	targetptr = (intptr_t *)&buffer->c[cpu].offset;
-	if (unlikely(!rseq_finish(targetptr, newval, rseq_state))) {
+	if (unlikely(!rseq_finish(targetptr, newval, rseq_state)))
+#endif
+	{
 		/* Fallback on rseq_op system call. */
 		for (;;) {
 			int ret;
@@ -790,12 +806,13 @@ void test_percpu_buffer(void)
 bool percpu_memcpy_buffer_push(struct percpu_memcpy_buffer *buffer,
 		struct percpu_memcpy_buffer_node item)
 {
-	struct rseq_state rseq_state;
 	char *destptr, *srcptr;
 	size_t copylen;
 	intptr_t *targetptr_final, newval_final;
 	int cpu;
 	intptr_t offset;
+#ifndef SKIP_FASTPATH
+	struct rseq_state rseq_state;
 
 	/* Try fast path. */
 	rseq_state = rseq_start();
@@ -809,7 +826,9 @@ bool percpu_memcpy_buffer_push(struct percpu_memcpy_buffer *buffer,
 	newval_final = offset + 1;
 	targetptr_final = &buffer->c[cpu].offset;
 	if (unlikely(!rseq_finish_memcpy(destptr, srcptr, copylen,
-			targetptr_final, newval_final, rseq_state))) {
+			targetptr_final, newval_final, rseq_state)))
+#endif
+	{
 		/* Fallback on rseq_op system call. */
 		for (;;) {
 			int ret;
@@ -837,12 +856,13 @@ bool percpu_memcpy_buffer_push(struct percpu_memcpy_buffer *buffer,
 bool percpu_memcpy_buffer_pop(struct percpu_memcpy_buffer *buffer,
 		struct percpu_memcpy_buffer_node *item)
 {
-	struct rseq_state rseq_state;
 	char *destptr, *srcptr;
 	size_t copylen;
 	intptr_t *targetptr_final, newval_final;
 	int cpu;
 	intptr_t offset;
+#ifndef SKIP_FASTPATH
+	struct rseq_state rseq_state;
 
 	/* Try fast path. */
 	rseq_state = rseq_start();
@@ -856,7 +876,9 @@ bool percpu_memcpy_buffer_pop(struct percpu_memcpy_buffer *buffer,
 	newval_final = offset - 1;
 	targetptr_final = &buffer->c[cpu].offset;
 	if (unlikely(!rseq_finish_memcpy(destptr, srcptr, copylen,
-			targetptr_final, newval_final, rseq_state))) {
+			targetptr_final, newval_final, rseq_state)))
+#endif
+	{
 		/* Fallback on rseq_op system call. */
 		for (;;) {
 			int ret;
@@ -1043,7 +1065,6 @@ static void show_usage(int argc, char **argv)
 	printf("	[-y] Yield\n");
 	printf("	[-k] Kill thread with signal\n");
 	printf("	[-s S] S: =0: disabled (default), >0: sleep time (ms)\n");
-	printf("	[-f N] Use fallback every N failure (>= 1)\n");
 	printf("	[-t N] Number of threads (default 200)\n");
 	printf("	[-r N] Number of repetitions per thread (default 5000)\n");
 	printf("	[-d] Disable rseq system call (no initialization)\n");
@@ -1119,18 +1140,6 @@ int main(int argc, char **argv)
 			}
 			opt_disable_mod = atol(argv[i + 1]);
 			if (opt_disable_mod < 0) {
-				show_usage(argc, argv);
-				goto error;
-			}
-			i++;
-			break;
-		case 'f':
-			if (argc < i + 2) {
-				show_usage(argc, argv);
-				goto error;
-			}
-			opt_fallback_cnt = atol(argv[i + 1]);
-			if (opt_fallback_cnt < 1) {
 				show_usage(argc, argv);
 				goto error;
 			}
