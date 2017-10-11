@@ -35,7 +35,8 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/rseq.h>
 
-#define TMP_BUFLEN	64
+#define TMP_BUFLEN			64
+#define NR_PINNED_PAGES_ON_STACK	8
 
 /*
  * The restartable sequences mechanism is the overlap of two distinct
@@ -423,7 +424,7 @@ static unsigned long rseq_op_range_nr_pages(unsigned long addr,
 }
 
 static int rseq_op_pin_pages(unsigned long addr, unsigned long len,
-		struct page **pinned_pages, size_t *nr_pinned)
+		struct page ***pinned_pages_ptr, size_t *nr_pinned)
 {
 	unsigned long nr_pages;
 	struct page *pages[2];
@@ -433,7 +434,16 @@ static int rseq_op_pin_pages(unsigned long addr, unsigned long len,
 		return 0;
 	nr_pages = rseq_op_range_nr_pages(addr, len);
 	BUG_ON(nr_pages > 2);
-
+	if (*nr_pinned + nr_pages > NR_PINNED_PAGES_ON_STACK) {
+		struct page **pinned_pages =
+			kzalloc(RSEQ_OP_VEC_LEN_MAX * RSEQ_OP_MAX_PAGES
+				* sizeof(struct page *), GFP_KERNEL);
+		if (!pinned_pages)
+			return -ENOMEM;
+		memcpy(pinned_pages, *pinned_pages_ptr,
+			*nr_pinned * sizeof(struct page *));
+		*pinned_pages_ptr = pinned_pages;
+	}
 	ret = get_user_pages_fast(addr, nr_pages, 0, pages);
 	if (ret < nr_pages) {
 		if (ret > 0) {
@@ -441,14 +451,14 @@ static int rseq_op_pin_pages(unsigned long addr, unsigned long len,
 		}
 		return -EFAULT;
 	}
-	pinned_pages[(*nr_pinned)++] = pages[0];
+	(*pinned_pages_ptr)[(*nr_pinned)++] = pages[0];
 	if (nr_pages > 1)
-		pinned_pages[(*nr_pinned)++] = pages[1];
+		(*pinned_pages_ptr)[(*nr_pinned)++] = pages[1];
 	return 0;
 }
 
 static int rseq_op_vec_pin_pages(struct rseq_op *rseqop, int rseqopcnt,
-		struct page **pinned_pages, size_t *nr_pinned)
+		struct page ***pinned_pages_ptr, size_t *nr_pinned)
 {
 	int ret, i;
 
@@ -461,13 +471,13 @@ static int rseq_op_vec_pin_pages(struct rseq_op *rseqop, int rseqopcnt,
 			if (!access_ok(VERIFY_READ, op->u.compare_op.a, op->len))
 				goto error;
 			ret = rseq_op_pin_pages((unsigned long)op->u.compare_op.a,
-					op->len, pinned_pages, nr_pinned);
+					op->len, pinned_pages_ptr, nr_pinned);
 			if (ret)
 				goto error;
 			if (!access_ok(VERIFY_READ, op->u.compare_op.b, op->len))
 				goto error;
 			ret = rseq_op_pin_pages((unsigned long)op->u.compare_op.b,
-					op->len, pinned_pages, nr_pinned);
+					op->len, pinned_pages_ptr, nr_pinned);
 			if (ret)
 				goto error;
 			break;
@@ -476,13 +486,13 @@ static int rseq_op_vec_pin_pages(struct rseq_op *rseqop, int rseqopcnt,
 			if (!access_ok(VERIFY_WRITE, op->u.memcpy_op.src, op->len))
 				goto error;
 			ret = rseq_op_pin_pages((unsigned long)op->u.memcpy_op.dst,
-					op->len, pinned_pages, nr_pinned);
+					op->len, pinned_pages_ptr, nr_pinned);
 			if (ret)
 				goto error;
 			if (!access_ok(VERIFY_READ, op->u.memcpy_op.src, op->len))
 				goto error;
 			ret = rseq_op_pin_pages((unsigned long)op->u.memcpy_op.src,
-					op->len, pinned_pages, nr_pinned);
+					op->len, pinned_pages_ptr, nr_pinned);
 			if (ret)
 				goto error;
 			break;
@@ -490,7 +500,7 @@ static int rseq_op_vec_pin_pages(struct rseq_op *rseqop, int rseqopcnt,
 			if (!access_ok(VERIFY_WRITE, op->u.arithmetic_op.p, op->len))
 				goto error;
 			ret = rseq_op_pin_pages((unsigned long)op->u.arithmetic_op.p,
-					op->len, pinned_pages, nr_pinned);
+					op->len, pinned_pages_ptr, nr_pinned);
 			if (ret)
 				goto error;
 			break;
@@ -500,7 +510,7 @@ static int rseq_op_vec_pin_pages(struct rseq_op *rseqop, int rseqopcnt,
 			if (!access_ok(VERIFY_WRITE, op->u.bitwise_op.p, op->len))
 				goto error;
 			ret = rseq_op_pin_pages((unsigned long)op->u.bitwise_op.p,
-					op->len, pinned_pages, nr_pinned);
+					op->len, pinned_pages_ptr, nr_pinned);
 			if (ret)
 				goto error;
 			break;
@@ -512,7 +522,7 @@ static int rseq_op_vec_pin_pages(struct rseq_op *rseqop, int rseqopcnt,
 
 error:
 	for (i = 0; i < *nr_pinned; i++)
-		put_page(pinned_pages[i]);
+		put_page((*pinned_pages_ptr)[i]);
 	*nr_pinned = 0;
 	return ret;
 }
@@ -1074,7 +1084,8 @@ SYSCALL_DEFINE4(rseq_op, struct rseq_op __user *, urseqop, int, rseqopcnt,
 		int, cpu, int, flags)
 {
 	struct rseq_op rseqop[RSEQ_OP_VEC_LEN_MAX];
-	struct page **pinned_pages = NULL;
+	struct page *pinned_pages_on_stack[NR_PINNED_PAGES_ON_STACK];
+	struct page **pinned_pages = pinned_pages_on_stack;
 	int ret, i;
 	size_t nr_pinned = 0;
 
@@ -1087,17 +1098,15 @@ SYSCALL_DEFINE4(rseq_op, struct rseq_op __user *, urseqop, int, rseqopcnt,
 	ret = rseq_op_vec_check(rseqop, rseqopcnt);
 	if (ret)
 		return ret;
-	pinned_pages = kzalloc(RSEQ_OP_VEC_LEN_MAX * RSEQ_OP_MAX_PAGES
-				* sizeof(struct page *), GFP_KERNEL);
-	if (!pinned_pages)
-		return -ENOMEM;
-	ret = rseq_op_vec_pin_pages(rseqop, rseqopcnt, pinned_pages, &nr_pinned);
+	ret = rseq_op_vec_pin_pages(rseqop, rseqopcnt,
+				&pinned_pages, &nr_pinned);
 	if (ret)
 		goto end;
 	ret = rseq_do_op_vec(rseqop, rseqopcnt, cpu);
 	for (i = 0; i < nr_pinned; i++)
 		put_page(pinned_pages[i]);
 end:
-	kfree(pinned_pages);
+	if (pinned_pages != pinned_pages_on_stack)
+		kfree(pinned_pages);
 	return ret;
 }
