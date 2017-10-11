@@ -161,16 +161,16 @@ int rseq_op_cmpxchg(void *v, void *expect, void *old, void *n,
 {
 	struct rseq_op opvec[] = {
 		[0] = {
-			.op = RSEQ_COMPARE_EQ_OP,
-			.len = len,
-			.u.compare_op.a = (unsigned long)v,
-			.u.compare_op.b = (unsigned long)expect,
-		},
-		[1] = {
 			.op = RSEQ_MEMCPY_OP,
 			.len = len,
 			.u.memcpy_op.dst = (unsigned long)old,
 			.u.memcpy_op.src = (unsigned long)v,
+		},
+		[1] = {
+			.op = RSEQ_COMPARE_EQ_OP,
+			.len = len,
+			.u.compare_op.a = (unsigned long)v,
+			.u.compare_op.b = (unsigned long)expect,
 		},
 		[2] = {
 			.op = RSEQ_MEMCPY_OP,
