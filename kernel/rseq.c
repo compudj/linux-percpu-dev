@@ -518,7 +518,7 @@ error:
 }
 
 /* Return 0 if same, > 0 if different, < 0 on error. */
-static int __rseq_do_op_compare(void __user *a, void __user *b, uint32_t len)
+static int __rseq_do_op_compare_copy(void __user *a, void __user *b, uint32_t len)
 {
 	char bufa[TMP_BUFLEN], bufb[TMP_BUFLEN];
 	uint32_t compared = 0;
@@ -538,6 +538,56 @@ static int __rseq_do_op_compare(void __user *a, void __user *b, uint32_t len)
 		compared += to_compare;
 	}
 	return 0;	/* same */
+}
+
+/* Return 0 if same, > 0 if different, < 0 on error. */
+static int __rseq_do_op_compare(void __user *a, void __user *b, uint32_t len)
+{
+	int ret = -EFAULT;
+	union {
+		uint8_t _u8;
+		uint16_t _u16;
+		uint32_t _u32;
+		uint64_t _u64;
+	} tmp[2];
+
+	pagefault_disable();
+	switch (len) {
+	case 1:
+		if (__get_user(tmp[0]._u8, (uint8_t __user *)a))
+			goto end;
+		if (__get_user(tmp[1]._u8, (uint8_t __user *)b))
+			goto end;
+		ret = !!(tmp[0]._u8 != tmp[1]._u8);
+		break;
+	case 2:
+		if (__get_user(tmp[0]._u16, (uint16_t __user *)a))
+			goto end;
+		if (__get_user(tmp[1]._u16, (uint16_t __user *)b))
+			goto end;
+		ret = !!(tmp[0]._u16 != tmp[1]._u16);
+		break;
+	case 4:
+		if (__get_user(tmp[0]._u32, (uint32_t __user *)a))
+			goto end;
+		if (__get_user(tmp[1]._u32, (uint32_t __user *)b))
+			goto end;
+		ret = !!(tmp[0]._u32 != tmp[1]._u32);
+		break;
+	case 8:
+		if (__get_user(tmp[0]._u64, (uint64_t __user *)a))
+			goto end;
+		if (__get_user(tmp[1]._u64, (uint64_t __user *)b))
+			goto end;
+		ret = !!(tmp[0]._u64 != tmp[1]._u64);
+		break;
+	default:
+		pagefault_enable();
+		return __rseq_do_op_compare_copy(a, b, len);
+	}
+end:
+	pagefault_enable();
+	return ret;
 }
 
 /* Return 0 on success, < 0 on error. */
