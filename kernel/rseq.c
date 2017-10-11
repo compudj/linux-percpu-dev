@@ -370,6 +370,7 @@ static int rseq_op_vec_check(struct rseq_op *rseqop, int rseqopcnt)
 
 		switch (op->op) {
 		case RSEQ_COMPARE_EQ_OP:
+		case RSEQ_COMPARE_NE_OP:
 		case RSEQ_MEMCPY_OP:
 			if (op->len > RSEQ_OP_DATA_LEN_MAX)
 				return -EINVAL;
@@ -469,6 +470,7 @@ static int rseq_op_vec_pin_pages(struct rseq_op *rseqop, int rseqopcnt,
 
 		switch (op->op) {
 		case RSEQ_COMPARE_EQ_OP:
+		case RSEQ_COMPARE_NE_OP:
 			if (!access_ok(VERIFY_READ, op->u.compare_op.a, op->len))
 				goto error;
 			ret = rseq_op_pin_pages((unsigned long)op->u.compare_op.a,
@@ -990,6 +992,17 @@ static int __rseq_do_op_vec(struct rseq_op *rseqop, int rseqopcnt)
 			/* Stop execution if error or comparison differs. */
 			if (ret)
 				return ret;
+			break;
+		case RSEQ_COMPARE_NE_OP:
+			ret = __rseq_do_op_compare(
+					(void __user *)op->u.compare_op.a,
+					(void __user *)op->u.compare_op.b,
+					op->len);
+			/* Stop execution if error or comparison is same. */
+			if (ret < 0)
+				return ret;
+			if (!ret)
+				return 1;
 			break;
 		case RSEQ_MEMCPY_OP:
 			ret = __rseq_do_op_memcpy(

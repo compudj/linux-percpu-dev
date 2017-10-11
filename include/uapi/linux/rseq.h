@@ -135,6 +135,7 @@ struct rseq {
 
 enum rseq_op_type {
 	RSEQ_COMPARE_EQ_OP,	/* compare */
+	RSEQ_COMPARE_NE_OP,	/* compare */
 	RSEQ_MEMCPY_OP,		/* memcpy */
 	RSEQ_ADD_OP,		/* arithmetic */
 	RSEQ_OR_OP,		/* bitwise */
