@@ -112,6 +112,7 @@ obj-$(CONFIG_MEMBARRIER) += membarrier.o
 
 obj-$(CONFIG_HAS_IOMEM) += memremap.o
 obj-$(CONFIG_RSEQ) += rseq.o
+obj-$(CONFIG_CPU_OPV) += cpu_opv.o
 
 $(obj)/configs.o: $(obj)/config_data.h
 
