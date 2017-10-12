@@ -5,6 +5,7 @@ TARGETS += breakpoints
 TARGETS += capabilities
 TARGETS += cpufreq
 TARGETS += cpu-hotplug
+TARGETS += cpu-opv
 TARGETS += efivarfs
 TARGETS += exec
 TARGETS += firmware
