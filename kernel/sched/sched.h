@@ -1209,6 +1209,8 @@ static inline void __set_task_cpu(struct task_struct *p, unsigned int cpu)
 #endif
 }
 
+int push_task_to_cpu(struct task_struct *p, unsigned int dest_cpu);
+
 /*
  * Tunables that become constants when CONFIG_SCHED_DEBUG is off:
  */
