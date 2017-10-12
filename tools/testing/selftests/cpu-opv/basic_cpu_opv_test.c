@@ -1,0 +1,828 @@
+/*
+ * Basic test coverage for cpu_opv system call.
+ */
+
+#define _GNU_SOURCE
+#include <assert.h>
+#include <sched.h>
+#include <signal.h>
+#include <stdio.h>
+#include <string.h>
+#include <sys/time.h>
+#include <errno.h>
+#include <stdlib.h>
+
+#include "cpu-op.h"
+
+#define ARRAY_SIZE(arr)	(sizeof(arr) / sizeof((arr)[0]))
+
+#define TESTBUFLEN	4096
+
+static int test_compare_eq_op(char *a, char *b, size_t len)
+{
+	struct cpu_op opvec[] = {
+		[0] = {
+			.op = CPU_COMPARE_EQ_OP,
+			.len = len,
+			.u.compare_op.a = (unsigned long)a,
+			.u.compare_op.b = (unsigned long)b,
+		},
+	};
+	int ret, cpu;
+
+	do {
+		cpu = cpu_op_get_current_cpu();
+		ret = cpu_opv(opvec, ARRAY_SIZE(opvec), cpu, 0);
+	} while (ret == -1 && errno == EAGAIN);
+
+	return ret;
+}
+
+static int test_compare_eq_same(void)
+{
+	int i, ret;
+	char buf1[TESTBUFLEN];
+	char buf2[TESTBUFLEN];
+	const char *test_name = "test_compare_eq same";
+
+	printf("Testing %s\n", test_name);
+
+	/* Test compare_eq */
+	for (i = 0; i < TESTBUFLEN; i++)
+		buf1[i] = (char)i;
+	for (i = 0; i < TESTBUFLEN; i++)
+		buf2[i] = (char)i;
+	ret = test_compare_eq_op(buf2, buf1, TESTBUFLEN);
+	if (ret < 0) {
+		printf("%s returned with %d, errno: %s\n",
+			test_name, ret, strerror(errno));
+		exit(-1);
+	}
+	if (ret > 0) {
+		printf("%s returned %d, expecting %d\n",
+			test_name, ret, 0);
+		return -1;
+	}
+	return 0;
+}
+
+static int test_compare_eq_diff(void)
+{
+	int i, ret;
+	char buf1[TESTBUFLEN];
+	char buf2[TESTBUFLEN];
+	const char *test_name = "test_compare_eq different";
+
+	printf("Testing %s\n", test_name);
+
+	for (i = 0; i < TESTBUFLEN; i++)
+		buf1[i] = (char)i;
+	memset(buf2, 0, TESTBUFLEN);
+	ret = test_compare_eq_op(buf2, buf1, TESTBUFLEN);
+	if (ret < 0) {
+		printf("%s returned with %d, errno: %s\n",
+			test_name, ret, strerror(errno));
+		exit(-1);
+	}
+	if (ret == 0) {
+		printf("%s returned %d, expecting %d\n",
+			test_name, ret, 1);
+		return -1;
+	}
+	return 0;
+}
+
+static int test_compare_ne_op(char *a, char *b, size_t len)
+{
+	struct cpu_op opvec[] = {
+		[0] = {
+			.op = CPU_COMPARE_NE_OP,
+			.len = len,
+			.u.compare_op.a = (unsigned long)a,
+			.u.compare_op.b = (unsigned long)b,
+		},
+	};
+	int ret, cpu;
+
+	do {
+		cpu = cpu_op_get_current_cpu();
+		ret = cpu_opv(opvec, ARRAY_SIZE(opvec), cpu, 0);
+	} while (ret == -1 && errno == EAGAIN);
+
+	return ret;
+}
+
+static int test_compare_ne_same(void)
+{
+	int i, ret;
+	char buf1[TESTBUFLEN];
+	char buf2[TESTBUFLEN];
+	const char *test_name = "test_compare_ne same";
+
+	printf("Testing %s\n", test_name);
+
+	/* Test compare_ne */
+	for (i = 0; i < TESTBUFLEN; i++)
+		buf1[i] = (char)i;
+	for (i = 0; i < TESTBUFLEN; i++)
+		buf2[i] = (char)i;
+	ret = test_compare_ne_op(buf2, buf1, TESTBUFLEN);
+	if (ret < 0) {
+		printf("%s returned with %d, errno: %s\n",
+			test_name, ret, strerror(errno));
+		exit(-1);
+	}
+	if (ret == 0) {
+		printf("%s returned %d, expecting %d\n",
+			test_name, ret, 1);
+		return -1;
+	}
+	return 0;
+}
+
+static int test_compare_ne_diff(void)
+{
+	int i, ret;
+	char buf1[TESTBUFLEN];
+	char buf2[TESTBUFLEN];
+	const char *test_name = "test_compare_ne different";
+
+	printf("Testing %s\n", test_name);
+
+	for (i = 0; i < TESTBUFLEN; i++)
+		buf1[i] = (char)i;
+	memset(buf2, 0, TESTBUFLEN);
+	ret = test_compare_ne_op(buf2, buf1, TESTBUFLEN);
+	if (ret < 0) {
+		printf("%s returned with %d, errno: %s\n",
+			test_name, ret, strerror(errno));
+		exit(-1);
+	}
+	if (ret != 0) {
+		printf("%s returned %d, expecting %d\n",
+			test_name, ret, 0);
+		return -1;
+	}
+	return 0;
+}
+
+static int test_2compare_eq_op(char *a, char *b, char *c, char *d,
+		size_t len)
+{
+	struct cpu_op opvec[] = {
+		[0] = {
+			.op = CPU_COMPARE_EQ_OP,
+			.len = len,
+			.u.compare_op.a = (unsigned long)a,
+			.u.compare_op.b = (unsigned long)b,
+		},
+		[1] = {
+			.op = CPU_COMPARE_EQ_OP,
+			.len = len,
+			.u.compare_op.a = (unsigned long)c,
+			.u.compare_op.b = (unsigned long)d,
+		},
+	};
+	int ret, cpu;
+
+	do {
+		cpu = cpu_op_get_current_cpu();
+		ret = cpu_opv(opvec, ARRAY_SIZE(opvec), cpu, 0);
+	} while (ret == -1 && errno == EAGAIN);
+
+	return ret;
+}
+
+static int test_2compare_eq_index(void)
+{
+	int i, ret;
+	char buf1[TESTBUFLEN];
+	char buf2[TESTBUFLEN];
+	char buf3[TESTBUFLEN];
+	char buf4[TESTBUFLEN];
+	const char *test_name = "test_2compare_eq index";
+
+	printf("Testing %s\n", test_name);
+
+	for (i = 0; i < TESTBUFLEN; i++)
+		buf1[i] = (char)i;
+	memset(buf2, 0, TESTBUFLEN);
+	memset(buf3, 0, TESTBUFLEN);
+	memset(buf4, 0, TESTBUFLEN);
+
+	/* First compare failure is op[0], expect 1. */
+	ret = test_2compare_eq_op(buf2, buf1, buf4, buf3, TESTBUFLEN);
+	if (ret < 0) {
+		printf("%s returned with %d, errno: %s\n",
+			test_name, ret, strerror(errno));
+		exit(-1);
+	}
+	if (ret != 1) {
+		printf("%s returned %d, expecting %d\n",
+			test_name, ret, 1);
+		return -1;
+	}
+
+	/* All compares succeed. */
+	for (i = 0; i < TESTBUFLEN; i++)
+		buf2[i] = (char)i;
+	ret = test_2compare_eq_op(buf2, buf1, buf4, buf3, TESTBUFLEN);
+	if (ret < 0) {
+		printf("%s returned with %d, errno: %s\n",
+			test_name, ret, strerror(errno));
+		exit(-1);
+	}
+	if (ret != 0) {
+		printf("%s returned %d, expecting %d\n",
+			test_name, ret, 0);
+		return -1;
+	}
+
+	/* First compare failure is op[1], expect 2. */
+	for (i = 0; i < TESTBUFLEN; i++)
+		buf3[i] = (char)i;
+	ret = test_2compare_eq_op(buf2, buf1, buf4, buf3, TESTBUFLEN);
+	if (ret < 0) {
+		printf("%s returned with %d, errno: %s\n",
+			test_name, ret, strerror(errno));
+		exit(-1);
+	}
+	if (ret != 2) {
+		printf("%s returned %d, expecting %d\n",
+			test_name, ret, 2);
+		return -1;
+	}
+
+	return 0;
+}
+
+static int test_2compare_ne_op(char *a, char *b, char *c, char *d,
+		size_t len)
+{
+	struct cpu_op opvec[] = {
+		[0] = {
+			.op = CPU_COMPARE_NE_OP,
+			.len = len,
+			.u.compare_op.a = (unsigned long)a,
+			.u.compare_op.b = (unsigned long)b,
+		},
+		[1] = {
+			.op = CPU_COMPARE_NE_OP,
+			.len = len,
+			.u.compare_op.a = (unsigned long)c,
+			.u.compare_op.b = (unsigned long)d,
+		},
+	};
+	int ret, cpu;
+
+	do {
+		cpu = cpu_op_get_current_cpu();
+		ret = cpu_opv(opvec, ARRAY_SIZE(opvec), cpu, 0);
+	} while (ret == -1 && errno == EAGAIN);
+
+	return ret;
+}
+
+static int test_2compare_ne_index(void)
+{
+	int i, ret;
+	char buf1[TESTBUFLEN];
+	char buf2[TESTBUFLEN];
+	char buf3[TESTBUFLEN];
+	char buf4[TESTBUFLEN];
+	const char *test_name = "test_2compare_ne index";
+
+	printf("Testing %s\n", test_name);
+
+	memset(buf1, 0, TESTBUFLEN);
+	memset(buf2, 0, TESTBUFLEN);
+	memset(buf3, 0, TESTBUFLEN);
+	memset(buf4, 0, TESTBUFLEN);
+
+	/* First compare ne failure is op[0], expect 1. */
+	ret = test_2compare_ne_op(buf2, buf1, buf4, buf3, TESTBUFLEN);
+	if (ret < 0) {
+		printf("%s returned with %d, errno: %s\n",
+			test_name, ret, strerror(errno));
+		exit(-1);
+	}
+	if (ret != 1) {
+		printf("%s returned %d, expecting %d\n",
+			test_name, ret, 1);
+		return -1;
+	}
+
+	/* All compare ne succeed. */
+	for (i = 0; i < TESTBUFLEN; i++)
+		buf1[i] = (char)i;
+	for (i = 0; i < TESTBUFLEN; i++)
+		buf3[i] = (char)i;
+	ret = test_2compare_ne_op(buf2, buf1, buf4, buf3, TESTBUFLEN);
+	if (ret < 0) {
+		printf("%s returned with %d, errno: %s\n",
+			test_name, ret, strerror(errno));
+		exit(-1);
+	}
+	if (ret != 0) {
+		printf("%s returned %d, expecting %d\n",
+			test_name, ret, 0);
+		return -1;
+	}
+
+	/* First compare failure is op[1], expect 2. */
+	for (i = 0; i < TESTBUFLEN; i++)
+		buf4[i] = (char)i;
+	ret = test_2compare_ne_op(buf2, buf1, buf4, buf3, TESTBUFLEN);
+	if (ret < 0) {
+		printf("%s returned with %d, errno: %s\n",
+			test_name, ret, strerror(errno));
+		exit(-1);
+	}
+	if (ret != 2) {
+		printf("%s returned %d, expecting %d\n",
+			test_name, ret, 2);
+		return -1;
+	}
+
+	return 0;
+}
+
+
+static int test_memcpy_op(void *dst, void *src, size_t len)
+{
+	struct cpu_op opvec[] = {
+		[0] = {
+			.op = CPU_MEMCPY_OP,
+			.len = len,
+			.u.memcpy_op.dst = (unsigned long)dst,
+			.u.memcpy_op.src = (unsigned long)src,
+		},
+	};
+	int ret, cpu;
+
+	do {
+		cpu = cpu_op_get_current_cpu();
+		ret = cpu_opv(opvec, ARRAY_SIZE(opvec), cpu, 0);
+	} while (ret == -1 && errno == EAGAIN);
+
+	return ret;
+}
+
+static int test_memcpy(void)
+{
+	int i, ret;
+	char buf1[TESTBUFLEN];
+	char buf2[TESTBUFLEN];
+	const char *test_name = "test_memcpy";
+
+	printf("Testing %s\n", test_name);
+
+	/* Test memcpy */
+	for (i = 0; i < TESTBUFLEN; i++)
+		buf1[i] = (char)i;
+	memset(buf2, 0, TESTBUFLEN);
+	ret = test_memcpy_op(buf2, buf1, TESTBUFLEN);
+	if (ret) {
+		printf("%s returned with %d, errno: %s\n",
+			test_name, ret, strerror(errno));
+		exit(-1);
+	}
+	for (i = 0; i < TESTBUFLEN; i++) {
+		if (buf2[i] != (char)i) {
+			printf("%s failed. Expecting '%d', found '%d' at offset %d\n",
+				test_name, (char)i, buf2[i], i);
+			return -1;
+		}
+	}
+	return 0;
+}
+
+static int test_memcpy_u32(void)
+{
+	int ret;
+	uint32_t v1, v2;
+	const char *test_name = "test_memcpy_u32";
+
+	printf("Testing %s\n", test_name);
+
+	/* Test memcpy_u32 */
+	v1 = 42;
+	v2 = 0;
+	ret = test_memcpy_op(&v2, &v1, sizeof(v1));
+	if (ret) {
+		printf("%s returned with %d, errno: %s\n",
+			test_name, ret, strerror(errno));
+		exit(-1);
+	}
+	if (v1 != v2) {
+		printf("%s failed. Expecting '%d', found '%d'\n",
+			test_name, v1, v2);
+		return -1;
+	}
+	return 0;
+}
+
+static int test_add_op(int *v, int64_t increment)
+{
+	int ret, cpu;
+
+	do {
+		cpu = cpu_op_get_current_cpu();
+		ret = cpu_op_add(v, increment, sizeof(*v), cpu);
+	} while (ret == -1 && errno == EAGAIN);
+
+	return ret;
+}
+
+static int test_add(void)
+{
+	int orig_v = 42, v, ret;
+	int increment = 1;
+	const char *test_name = "test_add";
+
+	printf("Testing %s\n", test_name);
+
+	v = orig_v;
+	ret = test_add_op(&v, increment);
+	if (ret) {
+		printf("%s returned with %d, errno: %s\n",
+			test_name, ret, strerror(errno));
+		return -1;
+	}
+	if (v != orig_v + increment) {
+		printf("%s unexpected value: %d. Should be %d.\n",
+			test_name, v, orig_v);
+		return -1;
+	}
+	return 0;
+}
+
+static int test_two_add_op(int *v, int64_t *increments)
+{
+	struct cpu_op opvec[] = {
+		[0] = {
+			.op = CPU_ADD_OP,
+			.len = sizeof(*v),
+			.u.arithmetic_op.p = (unsigned long)v,
+			.u.arithmetic_op.count = increments[0],
+		},
+		[1] = {
+			.op = CPU_ADD_OP,
+			.len = sizeof(*v),
+			.u.arithmetic_op.p = (unsigned long)v,
+			.u.arithmetic_op.count = increments[1],
+		},
+	};
+	int ret, cpu;
+
+	do {
+		cpu = cpu_op_get_current_cpu();
+		ret = cpu_opv(opvec, ARRAY_SIZE(opvec), cpu, 0);
+	} while (ret == -1 && errno == EAGAIN);
+
+	return ret;
+}
+
+static int test_two_add(void)
+{
+	int orig_v = 42, v, ret;
+	int64_t increments[2] = { 99, 123 };
+	const char *test_name = "test_two_add";
+
+	printf("Testing %s\n", test_name);
+
+	v = orig_v;
+	ret = test_two_add_op(&v, increments);
+	if (ret) {
+		printf("%s returned with %d, errno: %s\n",
+			test_name, ret, strerror(errno));
+		return -1;
+	}
+	if (v != orig_v + increments[0] + increments[1]) {
+		printf("%s unexpected value: %d. Should be %d.\n",
+			test_name, v, orig_v);
+		return -1;
+	}
+	return 0;
+}
+
+static int test_or_op(int *v, uint64_t mask)
+{
+	struct cpu_op opvec[] = {
+		[0] = {
+			.op = CPU_OR_OP,
+			.len = sizeof(*v),
+			.u.bitwise_op.p = (unsigned long)v,
+			.u.bitwise_op.mask = mask,
+		},
+	};
+	int ret, cpu;
+
+	do {
+		cpu = cpu_op_get_current_cpu();
+		ret = cpu_opv(opvec, ARRAY_SIZE(opvec), cpu, 0);
+	} while (ret == -1 && errno == EAGAIN);
+
+	return ret;
+}
+
+static int test_or(void)
+{
+	int orig_v = 0xFF00000, v, ret;
+	uint32_t mask = 0xFFF;
+	const char *test_name = "test_or";
+
+	printf("Testing %s\n", test_name);
+
+	v = orig_v;
+	ret = test_or_op(&v, mask);
+	if (ret) {
+		printf("%s returned with %d, errno: %s\n",
+			test_name, ret, strerror(errno));
+		return -1;
+	}
+	if (v != (orig_v | mask)) {
+		printf("%s unexpected value: %d. Should be %d.\n",
+			test_name, v, orig_v | mask);
+		return -1;
+	}
+	return 0;
+}
+
+static int test_and_op(int *v, uint64_t mask)
+{
+	struct cpu_op opvec[] = {
+		[0] = {
+			.op = CPU_AND_OP,
+			.len = sizeof(*v),
+			.u.bitwise_op.p = (unsigned long)v,
+			.u.bitwise_op.mask = mask,
+		},
+	};
+	int ret, cpu;
+
+	do {
+		cpu = cpu_op_get_current_cpu();
+		ret = cpu_opv(opvec, ARRAY_SIZE(opvec), cpu, 0);
+	} while (ret == -1 && errno == EAGAIN);
+
+	return ret;
+}
+
+static int test_and(void)
+{
+	int orig_v = 0xF00, v, ret;
+	uint32_t mask = 0xFFF;
+	const char *test_name = "test_and";
+
+	printf("Testing %s\n", test_name);
+
+	v = orig_v;
+	ret = test_and_op(&v, mask);
+	if (ret) {
+		printf("%s returned with %d, errno: %s\n",
+			test_name, ret, strerror(errno));
+		return -1;
+	}
+	if (v != (orig_v & mask)) {
+		printf("%s unexpected value: %d. Should be %d.\n",
+			test_name, v, orig_v & mask);
+		return -1;
+	}
+	return 0;
+}
+
+static int test_xor_op(int *v, uint64_t mask)
+{
+	struct cpu_op opvec[] = {
+		[0] = {
+			.op = CPU_XOR_OP,
+			.len = sizeof(*v),
+			.u.bitwise_op.p = (unsigned long)v,
+			.u.bitwise_op.mask = mask,
+		},
+	};
+	int ret, cpu;
+
+	do {
+		cpu = cpu_op_get_current_cpu();
+		ret = cpu_opv(opvec, ARRAY_SIZE(opvec), cpu, 0);
+	} while (ret == -1 && errno == EAGAIN);
+
+	return ret;
+}
+
+static int test_xor(void)
+{
+	int orig_v = 0xF00, v, ret;
+	uint32_t mask = 0xFFF;
+	const char *test_name = "test_xor";
+
+	printf("Testing %s\n", test_name);
+
+	v = orig_v;
+	ret = test_xor_op(&v, mask);
+	if (ret) {
+		printf("%s returned with %d, errno: %s\n",
+			test_name, ret, strerror(errno));
+		return -1;
+	}
+	if (v != (orig_v ^ mask)) {
+		printf("%s unexpected value: %d. Should be %d.\n",
+			test_name, v, orig_v ^ mask);
+		return -1;
+	}
+	return 0;
+}
+
+static int test_lshift_op(int *v, uint32_t bits)
+{
+	struct cpu_op opvec[] = {
+		[0] = {
+			.op = CPU_LSHIFT_OP,
+			.len = sizeof(*v),
+			.u.shift_op.p = (unsigned long)v,
+			.u.shift_op.bits = bits,
+		},
+	};
+	int ret, cpu;
+
+	do {
+		cpu = cpu_op_get_current_cpu();
+		ret = cpu_opv(opvec, ARRAY_SIZE(opvec), cpu, 0);
+	} while (ret == -1 && errno == EAGAIN);
+
+	return ret;
+}
+
+static int test_lshift(void)
+{
+	int orig_v = 0xF00, v, ret;
+	uint32_t bits = 5;
+	const char *test_name = "test_lshift";
+
+	printf("Testing %s\n", test_name);
+
+	v = orig_v;
+	ret = test_lshift_op(&v, bits);
+	if (ret) {
+		printf("%s returned with %d, errno: %s\n",
+			test_name, ret, strerror(errno));
+		return -1;
+	}
+	if (v != (orig_v << bits)) {
+		printf("%s unexpected value: %d. Should be %d.\n",
+			test_name, v, orig_v << bits);
+		return -1;
+	}
+	return 0;
+}
+
+
+static int test_rshift_op(int *v, uint32_t bits)
+{
+	struct cpu_op opvec[] = {
+		[0] = {
+			.op = CPU_RSHIFT_OP,
+			.len = sizeof(*v),
+			.u.shift_op.p = (unsigned long)v,
+			.u.shift_op.bits = bits,
+		},
+	};
+	int ret, cpu;
+
+	do {
+		cpu = cpu_op_get_current_cpu();
+		ret = cpu_opv(opvec, ARRAY_SIZE(opvec), cpu, 0);
+	} while (ret == -1 && errno == EAGAIN);
+
+	return ret;
+}
+
+static int test_rshift(void)
+{
+	int orig_v = 0xF00, v, ret;
+	uint32_t bits = 5;
+	const char *test_name = "test_rshift";
+
+	printf("Testing %s\n", test_name);
+
+	v = orig_v;
+	ret = test_rshift_op(&v, bits);
+	if (ret) {
+		printf("%s returned with %d, errno: %s\n",
+			test_name, ret, strerror(errno));
+		return -1;
+	}
+	if (v != (orig_v >> bits)) {
+		printf("%s unexpected value: %d. Should be %d.\n",
+			test_name, v, orig_v >> bits);
+		return -1;
+	}
+	return 0;
+}
+
+static int test_cmpxchg_op(void *v, void *expect, void *old, void *n,
+		size_t len)
+{
+	int ret, cpu;
+
+	do {
+		cpu = cpu_op_get_current_cpu();
+		ret = cpu_op_cmpxchg(v, expect, old, n, len, cpu);
+	} while (ret == -1 && errno == EAGAIN);
+
+	return ret;
+}
+
+
+static int test_cmpxchg_success(void)
+{
+	int ret;
+	uint64_t orig_v = 1, v, expect = 1, old = 0, n = 3;
+	const char *test_name = "test_cmpxchg success";
+
+	printf("Testing %s\n", test_name);
+
+	v = orig_v;
+	ret = test_cmpxchg_op(&v, &expect, &old, &n, sizeof(uint64_t));
+	if (ret < 0) {
+		printf("%s returned with %d, errno: %s\n",
+			test_name, ret, strerror(errno));
+		exit(-1);
+	}
+	if (ret) {
+		printf("%s returned %d, expecting %d\n",
+			test_name, ret, 0);
+		return -1;
+	}
+	if (v != n) {
+		printf("%s v is %lld, expecting %lld\n",
+			test_name, (long long)v, (long long)n);
+		return -1;
+	}
+	if (old != orig_v) {
+		printf("%s old is %lld, expecting %lld\n",
+			test_name, (long long)old, (long long)orig_v);
+		return -1;
+	}
+	return 0;
+}
+
+static int test_cmpxchg_fail(void)
+{
+	int ret;
+	uint64_t orig_v = 1, v, expect = 123, old = 0, n = 3;
+	const char *test_name = "test_cmpxchg fail";
+
+	printf("Testing %s\n", test_name);
+
+	v = orig_v;
+	ret = test_cmpxchg_op(&v, &expect, &old, &n, sizeof(uint64_t));
+	if (ret < 0) {
+		printf("%s returned with %d, errno: %s\n",
+			test_name, ret, strerror(errno));
+		exit(-1);
+	}
+	if (ret == 0) {
+		printf("%s returned %d, expecting %d\n",
+			test_name, ret, 1);
+		return -1;
+	}
+	if (v == n) {
+		printf("%s v is %lld, expecting %lld\n",
+			test_name, (long long)v, (long long)orig_v);
+		return -1;
+	}
+	if (old != orig_v) {
+		printf("%s old is %lld, expecting %lld\n",
+			test_name, (long long)old, (long long)orig_v);
+		return -1;
+	}
+	return 0;
+}
+
+int main(int argc, char **argv)
+{
+	int ret = 0;
+
+	ret |= test_compare_eq_same();
+	ret |= test_compare_eq_diff();
+	ret |= test_compare_ne_same();
+	ret |= test_compare_ne_diff();
+	ret |= test_2compare_eq_index();
+	ret |= test_2compare_ne_index();
+	ret |= test_memcpy();
+	ret |= test_memcpy_u32();
+	ret |= test_add();
+	ret |= test_two_add();
+	ret |= test_or();
+	ret |= test_and();
+	ret |= test_xor();
+	ret |= test_lshift();
+	ret |= test_rshift();
+	ret |= test_cmpxchg_success();
+	ret |= test_cmpxchg_fail();
+
+	return ret;
+}
