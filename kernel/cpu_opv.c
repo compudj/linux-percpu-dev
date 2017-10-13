@@ -26,6 +26,7 @@
 #include <linux/syscalls.h>
 #include <linux/cpu_opv.h>
 #include <linux/types.h>
+#include <linux/mutex.h>
 #include <asm/ptrace.h>
 #include <asm/byteorder.h>
 
@@ -33,6 +34,8 @@
 
 #define TMP_BUFLEN			64
 #define NR_PINNED_PAGES_ON_STACK	8
+
+static DEFINE_MUTEX(cpu_opv_offline_lock);
 
 /*
  * The cpu_opv system call executes a vector of operations on behalf of
@@ -947,7 +950,7 @@ static int do_cpu_opv(struct cpu_op *cpuop, int cpuopcnt, int cpu)
 	if (cpu != raw_smp_processor_id()) {
 		ret = push_task_to_cpu(current, cpu);
 		if (ret)
-			return ret;
+			goto check_online;
 	}
 	preempt_disable();
 	if (cpu != smp_processor_id()) {
@@ -957,6 +960,27 @@ static int do_cpu_opv(struct cpu_op *cpuop, int cpuopcnt, int cpu)
 	ret = __do_cpu_opv(cpuop, cpuopcnt);
 end:
 	preempt_enable();
+	return ret;
+
+check_online:
+	if (!cpu_possible(cpu))
+		return -EINVAL;
+	get_online_cpus();
+	if (cpu_online(cpu)) {
+		ret = -EAGAIN;
+		goto put_online_cpus;
+	}
+	/*
+	 * CPU is offline. Perform operation from the current CPU with
+	 * cpu_online read lock held, preventing that CPU from coming online,
+	 * and with mutex held, providing mutual exclusion against other
+	 * CPUs also finding out about an offline CPU.
+	 */
+	mutex_lock(&cpu_opv_offline_lock);
+	ret = __do_cpu_opv(cpuop, cpuopcnt);
+	mutex_unlock(&cpu_opv_offline_lock);
+put_online_cpus:
+	put_online_cpus();
 	return ret;
 }
 
