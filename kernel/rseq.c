@@ -155,6 +155,8 @@ static bool rseq_get_rseq_cs(struct task_struct *t,
 	unsigned long ptr;
 	struct rseq_cs __user *urseq_cs;
 	struct rseq_cs rseq_cs;
+	u32 __user *usig;
+	u32 sig;
 
 	if (__get_user(ptr, &t->rseq->rseq_cs))
 		return false;
@@ -178,6 +180,15 @@ static bool rseq_get_rseq_cs(struct task_struct *t,
 	*post_commit_ip = (void __user *)rseq_cs.post_commit_ip;
 	*abort_ip = (void __user *)rseq_cs.abort_ip;
 	*cs_flags = rseq_cs.flags;
+	usig = (u32 __user *)(rseq_cs.abort_ip - sizeof(u32));
+	if (get_user(sig, usig))
+		return false;
+	if (current->rseq_sig != sig) {
+		printk(KERN_WARNING
+			"Possible attack attempt. Unexpected rseq signature 0x%x, expecting 0x%x (pid=%d, addr=%p).\n",
+			sig, current->rseq_sig, current->pid, usig);
+		return false;
+	}
 	return true;
 }
 
@@ -295,7 +306,8 @@ error:
 /*
  * sys_rseq - setup restartable sequences for caller thread.
  */
-SYSCALL_DEFINE2(rseq, struct rseq __user *, rseq, int, flags)
+SYSCALL_DEFINE3(rseq, struct rseq __user *, rseq, int, flags,
+		uint32_t, sig)
 {
 	if (!rseq) {
 		/* Unregister rseq for current thread. */
@@ -303,13 +315,16 @@ SYSCALL_DEFINE2(rseq, struct rseq __user *, rseq, int, flags)
 			return -EINVAL;
 		if (flags & RSEQ_FORCE_UNREGISTER) {
 			current->rseq = NULL;
+			current->rseq_sig = 0;
 			current->rseq_refcount = 0;
 			return 0;
 		}
 		if (!current->rseq_refcount)
 			return -ENOENT;
-		if (!--current->rseq_refcount)
+		if (!--current->rseq_refcount) {
 			current->rseq = NULL;
+			current->rseq_sig = 0;
+		}
 		return 0;
 	}
 
@@ -325,6 +340,8 @@ SYSCALL_DEFINE2(rseq, struct rseq __user *, rseq, int, flags)
 		BUG_ON(!current->rseq_refcount);
 		if (current->rseq != rseq)
 			return -EBUSY;
+		if (current->rseq_sig != sig)
+			return -EPERM;
 		if (current->rseq_refcount == UINT_MAX)
 			return -EOVERFLOW;
 		current->rseq_refcount++;
@@ -340,6 +357,7 @@ SYSCALL_DEFINE2(rseq, struct rseq __user *, rseq, int, flags)
 		if (!access_ok(VERIFY_WRITE, rseq, sizeof(*rseq)))
 			return -EFAULT;
 		current->rseq = rseq;
+		current->rseq_sig = sig;
 		current->rseq_refcount = 1;
 		/*
 		 * If rseq was previously inactive, and has just
