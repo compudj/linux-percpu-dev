@@ -35,6 +35,18 @@
 #define TMP_BUFLEN			64
 #define NR_PINNED_PAGES_ON_STACK	8
 
+union op_fn_data {
+	uint8_t _u8;
+	uint16_t _u16;
+	uint32_t _u32;
+	uint64_t _u64;
+#if (BITS_PER_LONG < 64)
+	uint32_t _u64_split[2];
+#endif
+};
+
+typedef int (*op_fn_t)(union op_fn_data *data, uint64_t v, uint32_t len);
+
 static DEFINE_MUTEX(cpu_opv_offline_lock);
 
 /*
@@ -439,108 +451,180 @@ end:
 	return ret;
 }
 
-/* Return 0 on success, < 0 on error. */
-static int do_cpu_op_add(void __user *p, int64_t count, uint32_t len)
+static int op_add_fn(union op_fn_data *data, uint64_t count, uint32_t len)
 {
-	int ret = -EFAULT;
-	union {
-		uint8_t _u8;
-		uint16_t _u16;
-		uint32_t _u32;
-		uint64_t _u64;
-#if (BITS_PER_LONG < 64)
-		uint32_t _u64_split[2];
-#endif
-	} tmp;
+	int ret = 0;
 
-	pagefault_disable();
 	switch (len) {
 	case 1:
-		if (__get_user(tmp._u8, (uint8_t __user *)p))
-			goto end;
-		tmp._u8 += (uint8_t)count;
-		if (__put_user(tmp._u8, (uint8_t __user *)p))
-			goto end;
+		data->_u8 += (uint8_t)count;
 		break;
 	case 2:
-		if (__get_user(tmp._u16, (uint16_t __user *)p))
-			goto end;
-		tmp._u16 += (uint16_t)count;
-		if (__put_user(tmp._u16, (uint16_t __user *)p))
-			goto end;
+		data->_u16 += (uint16_t)count;
 		break;
 	case 4:
-		if (__get_user(tmp._u32, (uint32_t __user *)p))
-			goto end;
-		tmp._u32 += (uint32_t)count;
-		if (__put_user(tmp._u32, (uint32_t __user *)p))
-			goto end;
+		data->_u32 += (uint32_t)count;
 		break;
 	case 8:
-#if (BITS_PER_LONG >= 64)
-		if (__get_user(tmp._u64, (uint64_t __user *)p))
-			goto end;
-#else
-		if (__get_user(tmp._u64_split[0], (uint32_t __user *)p))
-			goto end;
-		if (__get_user(tmp._u64_split[1], (uint32_t __user *)p + 1))
-			goto end;
-#endif
-		tmp._u64 += (uint64_t)count;
-#if (BITS_PER_LONG >= 64)
-		if (__put_user(tmp._u64, (uint64_t __user *)p))
-			goto end;
-#else
-		if (__put_user(tmp._u64_split[0], (uint32_t __user *)p))
-			goto end;
-		if (__put_user(tmp._u64_split[1], (uint32_t __user *)p + 1))
-			goto end;
-#endif
+		data->_u64 += (uint64_t)count;
 		break;
 	default:
 		ret = -EINVAL;
-		goto end;
+		break;
 	}
-	ret = 0;
-end:
-	pagefault_enable();
+	return ret;
+}
+
+static int op_or_fn(union op_fn_data *data, uint64_t mask, uint32_t len)
+{
+	int ret = 0;
+
+	switch (len) {
+	case 1:
+		data->_u8 |= (uint8_t)mask;
+		break;
+	case 2:
+		data->_u16 |= (uint16_t)mask;
+		break;
+	case 4:
+		data->_u32 |= (uint32_t)mask;
+		break;
+	case 8:
+		data->_u64 |= (uint64_t)mask;
+		break;
+	default:
+		ret = -EINVAL;
+		break;
+	}
+	return ret;
+}
+
+static int op_and_fn(union op_fn_data *data, uint64_t mask, uint32_t len)
+{
+	int ret = 0;
+
+	switch (len) {
+	case 1:
+		data->_u8 &= (uint8_t)mask;
+		break;
+	case 2:
+		data->_u16 &= (uint16_t)mask;
+		break;
+	case 4:
+		data->_u32 &= (uint32_t)mask;
+		break;
+	case 8:
+		data->_u64 &= (uint64_t)mask;
+		break;
+	default:
+		ret = -EINVAL;
+		break;
+	}
+	return ret;
+}
+
+static int op_xor_fn(union op_fn_data *data, uint64_t mask, uint32_t len)
+{
+	int ret = 0;
+
+	switch (len) {
+	case 1:
+		data->_u8 ^= (uint8_t)mask;
+		break;
+	case 2:
+		data->_u16 ^= (uint16_t)mask;
+		break;
+	case 4:
+		data->_u32 ^= (uint32_t)mask;
+		break;
+	case 8:
+		data->_u64 ^= (uint64_t)mask;
+		break;
+	default:
+		ret = -EINVAL;
+		break;
+	}
+	return ret;
+}
+
+static int op_lshift_fn(union op_fn_data *data, uint64_t bits, uint32_t len)
+{
+	int ret = 0;
+
+	switch (len) {
+	case 1:
+		data->_u8 <<= (uint8_t)bits;
+		break;
+	case 2:
+		data->_u16 <<= (uint16_t)bits;
+		break;
+	case 4:
+		data->_u32 <<= (uint32_t)bits;
+		break;
+	case 8:
+		data->_u64 <<= (uint64_t)bits;
+		break;
+	default:
+		ret = -EINVAL;
+		break;
+	}
+	return ret;
+}
+
+static int op_rshift_fn(union op_fn_data *data, uint64_t bits, uint32_t len)
+{
+	int ret = 0;
+
+	switch (len) {
+	case 1:
+		data->_u8 >>= (uint8_t)bits;
+		break;
+	case 2:
+		data->_u16 >>= (uint16_t)bits;
+		break;
+	case 4:
+		data->_u32 >>= (uint32_t)bits;
+		break;
+	case 8:
+		data->_u64 >>= (uint64_t)bits;
+		break;
+	default:
+		ret = -EINVAL;
+		break;
+	}
 	return ret;
 }
 
 /* Return 0 on success, < 0 on error. */
-static int do_cpu_op_or(void __user *p, uint64_t mask, uint32_t len)
+static int do_cpu_op_fn(op_fn_t op_fn, void __user *p, uint64_t v,
+		uint32_t len)
 {
 	int ret = -EFAULT;
-	union {
-		uint8_t _u8;
-		uint16_t _u16;
-		uint32_t _u32;
-		uint64_t _u64;
-#if (BITS_PER_LONG < 64)
-		uint32_t _u64_split[2];
-#endif
-	} tmp;
+	union op_fn_data tmp;
 
 	pagefault_disable();
 	switch (len) {
 	case 1:
 		if (__get_user(tmp._u8, (uint8_t __user *)p))
 			goto end;
-		tmp._u8 |= (uint8_t)mask;
+		if (op_fn(&tmp, v, len))
+			goto end;
 		if (__put_user(tmp._u8, (uint8_t __user *)p))
 			goto end;
 		break;
 	case 2:
 		if (__get_user(tmp._u16, (uint16_t __user *)p))
 			goto end;
-		tmp._u16 |= (uint16_t)mask;
+		if (op_fn(&tmp, v, len))
+			goto end;
 		if (__put_user(tmp._u16, (uint16_t __user *)p))
 			goto end;
 		break;
 	case 4:
 		if (__get_user(tmp._u32, (uint32_t __user *)p))
 			goto end;
-		tmp._u32 |= (uint32_t)mask;
+		if (op_fn(&tmp, v, len))
+			goto end;
 		if (__put_user(tmp._u32, (uint32_t __user *)p))
 			goto end;
 		break;
@@ -554,279 +638,8 @@ static int do_cpu_op_or(void __user *p, uint64_t mask, uint32_t len)
 		if (__get_user(tmp._u64_split[1], (uint32_t __user *)p + 1))
 			goto end;
 #endif
-		tmp._u64 |= (uint64_t)mask;
-#if (BITS_PER_LONG >= 64)
-		if (__put_user(tmp._u64, (uint64_t __user *)p))
+		if (op_fn(&tmp, v, len))
 			goto end;
-#else
-		if (__put_user(tmp._u64_split[0], (uint32_t __user *)p))
-			goto end;
-		if (__put_user(tmp._u64_split[1], (uint32_t __user *)p + 1))
-			goto end;
-#endif
-		break;
-	default:
-		ret = -EINVAL;
-		goto end;
-	}
-	ret = 0;
-end:
-	pagefault_enable();
-	return ret;
-}
-
-/* Return 0 on success, < 0 on error. */
-static int do_cpu_op_and(void __user *p, uint64_t mask, uint32_t len)
-{
-	int ret = -EFAULT;
-	union {
-		uint8_t _u8;
-		uint16_t _u16;
-		uint32_t _u32;
-		uint64_t _u64;
-#if (BITS_PER_LONG < 64)
-		uint32_t _u64_split[2];
-#endif
-	} tmp;
-
-	pagefault_disable();
-	switch (len) {
-	case 1:
-		if (__get_user(tmp._u8, (uint8_t __user *)p))
-			goto end;
-		tmp._u8 &= (uint8_t)mask;
-		if (__put_user(tmp._u8, (uint8_t __user *)p))
-			goto end;
-		break;
-	case 2:
-		if (__get_user(tmp._u16, (uint16_t __user *)p))
-			goto end;
-		tmp._u16 &= (uint16_t)mask;
-		if (__put_user(tmp._u16, (uint16_t __user *)p))
-			goto end;
-		break;
-	case 4:
-		if (__get_user(tmp._u32, (uint32_t __user *)p))
-			goto end;
-		tmp._u32 &= (uint32_t)mask;
-		if (__put_user(tmp._u32, (uint32_t __user *)p))
-			goto end;
-		break;
-	case 8:
-#if (BITS_PER_LONG >= 64)
-		if (__get_user(tmp._u64, (uint64_t __user *)p))
-			goto end;
-#else
-		if (__get_user(tmp._u64_split[0], (uint32_t __user *)p))
-			goto end;
-		if (__get_user(tmp._u64_split[1], (uint32_t __user *)p + 1))
-			goto end;
-#endif
-		tmp._u64 &= (uint64_t)mask;
-#if (BITS_PER_LONG >= 64)
-		if (__put_user(tmp._u64, (uint64_t __user *)p))
-			goto end;
-#else
-		if (__put_user(tmp._u64_split[0], (uint32_t __user *)p))
-			goto end;
-		if (__put_user(tmp._u64_split[1], (uint32_t __user *)p + 1))
-			goto end;
-#endif
-		break;
-	default:
-		ret = -EINVAL;
-		goto end;
-	}
-	ret = 0;
-end:
-	pagefault_enable();
-	return ret;
-}
-
-/* Return 0 on success, < 0 on error. */
-static int do_cpu_op_xor(void __user *p, uint64_t mask, uint32_t len)
-{
-	int ret = -EFAULT;
-	union {
-		uint8_t _u8;
-		uint16_t _u16;
-		uint32_t _u32;
-		uint64_t _u64;
-#if (BITS_PER_LONG < 64)
-		uint32_t _u64_split[2];
-#endif
-	} tmp;
-
-	pagefault_disable();
-	switch (len) {
-	case 1:
-		if (__get_user(tmp._u8, (uint8_t __user *)p))
-			goto end;
-		tmp._u8 ^= (uint8_t)mask;
-		if (__put_user(tmp._u8, (uint8_t __user *)p))
-			goto end;
-		break;
-	case 2:
-		if (__get_user(tmp._u16, (uint16_t __user *)p))
-			goto end;
-		tmp._u16 ^= (uint16_t)mask;
-		if (__put_user(tmp._u16, (uint16_t __user *)p))
-			goto end;
-		break;
-	case 4:
-		if (__get_user(tmp._u32, (uint32_t __user *)p))
-			goto end;
-		tmp._u32 ^= (uint32_t)mask;
-		if (__put_user(tmp._u32, (uint32_t __user *)p))
-			goto end;
-		break;
-	case 8:
-#if (BITS_PER_LONG >= 64)
-		if (__get_user(tmp._u64, (uint64_t __user *)p))
-			goto end;
-#else
-		if (__get_user(tmp._u64_split[0], (uint32_t __user *)p))
-			goto end;
-		if (__get_user(tmp._u64_split[1], (uint32_t __user *)p + 1))
-			goto end;
-#endif
-		tmp._u64 ^= (uint64_t)mask;
-#if (BITS_PER_LONG >= 64)
-		if (__put_user(tmp._u64, (uint64_t __user *)p))
-			goto end;
-#else
-		if (__put_user(tmp._u64_split[0], (uint32_t __user *)p))
-			goto end;
-		if (__put_user(tmp._u64_split[1], (uint32_t __user *)p + 1))
-			goto end;
-#endif
-		break;
-	default:
-		ret = -EINVAL;
-		goto end;
-	}
-	ret = 0;
-end:
-	pagefault_enable();
-	return ret;
-}
-
-/* Return 0 on success, < 0 on error. */
-static int do_cpu_op_lshift(void __user *p, uint32_t bits, uint32_t len)
-{
-	int ret = -EFAULT;
-	union {
-		uint8_t _u8;
-		uint16_t _u16;
-		uint32_t _u32;
-		uint64_t _u64;
-#if (BITS_PER_LONG < 64)
-		uint32_t _u64_split[2];
-#endif
-	} tmp;
-
-	pagefault_disable();
-	switch (len) {
-	case 1:
-		if (__get_user(tmp._u8, (uint8_t __user *)p))
-			goto end;
-		tmp._u8 <<= bits;
-		if (__put_user(tmp._u8, (uint8_t __user *)p))
-			goto end;
-		break;
-	case 2:
-		if (__get_user(tmp._u16, (uint16_t __user *)p))
-			goto end;
-		tmp._u16 <<= bits;
-		if (__put_user(tmp._u16, (uint16_t __user *)p))
-			goto end;
-		break;
-	case 4:
-		if (__get_user(tmp._u32, (uint32_t __user *)p))
-			goto end;
-		tmp._u32 <<= bits;
-		if (__put_user(tmp._u32, (uint32_t __user *)p))
-			goto end;
-		break;
-	case 8:
-#if (BITS_PER_LONG >= 64)
-		if (__get_user(tmp._u64, (uint64_t __user *)p))
-			goto end;
-#else
-		if (__get_user(tmp._u64_split[0], (uint32_t __user *)p))
-			goto end;
-		if (__get_user(tmp._u64_split[1], (uint32_t __user *)p + 1))
-			goto end;
-#endif
-		tmp._u64 <<= bits;
-#if (BITS_PER_LONG >= 64)
-		if (__put_user(tmp._u64, (uint64_t __user *)p))
-			goto end;
-#else
-		if (__put_user(tmp._u64_split[0], (uint32_t __user *)p))
-			goto end;
-		if (__put_user(tmp._u64_split[1], (uint32_t __user *)p + 1))
-			goto end;
-#endif
-		break;
-	default:
-		ret = -EINVAL;
-		goto end;
-	}
-	ret = 0;
-end:
-	pagefault_enable();
-	return ret;
-}
-
-/* Return 0 on success, < 0 on error. */
-static int do_cpu_op_rshift(void __user *p, uint32_t bits, uint32_t len)
-{
-	int ret = -EFAULT;
-	union {
-		uint8_t _u8;
-		uint16_t _u16;
-		uint32_t _u32;
-		uint64_t _u64;
-#if (BITS_PER_LONG < 64)
-		uint32_t _u64_split[2];
-#endif
-	} tmp;
-
-	pagefault_disable();
-	switch (len) {
-	case 1:
-		if (__get_user(tmp._u8, (uint8_t __user *)p))
-			goto end;
-		tmp._u8 >>= bits;
-		if (__put_user(tmp._u8, (uint8_t __user *)p))
-			goto end;
-		break;
-	case 2:
-		if (__get_user(tmp._u16, (uint16_t __user *)p))
-			goto end;
-		tmp._u16 >>= bits;
-		if (__put_user(tmp._u16, (uint16_t __user *)p))
-			goto end;
-		break;
-	case 4:
-		if (__get_user(tmp._u32, (uint32_t __user *)p))
-			goto end;
-		tmp._u32 >>= bits;
-		if (__put_user(tmp._u32, (uint32_t __user *)p))
-			goto end;
-		break;
-	case 8:
-#if (BITS_PER_LONG >= 64)
-		if (__get_user(tmp._u64, (uint64_t __user *)p))
-			goto end;
-#else
-		if (__get_user(tmp._u64_split[0], (uint32_t __user *)p))
-			goto end;
-		if (__get_user(tmp._u64_split[1], (uint32_t __user *)p + 1))
-			goto end;
-#endif
-		tmp._u64 >>= bits;
 #if (BITS_PER_LONG >= 64)
 		if (__put_user(tmp._u64, (uint64_t __user *)p))
 			goto end;
@@ -895,42 +708,48 @@ static int __do_cpu_opv(struct cpu_op *cpuop, int cpuopcnt)
 				return ret;
 			break;
 		case CPU_ADD_OP:
-			ret = do_cpu_op_add((void __user *)op->u.arithmetic_op.p,
+			ret = do_cpu_op_fn(op_add_fn,
+					(void __user *)op->u.arithmetic_op.p,
 					op->u.arithmetic_op.count, op->len);
 			/* Stop execution on error. */
 			if (ret)
 				return ret;
 			break;
 		case CPU_OR_OP:
-			ret = do_cpu_op_or((void __user *)op->u.bitwise_op.p,
+			ret = do_cpu_op_fn(op_or_fn,
+					(void __user *)op->u.bitwise_op.p,
 					op->u.bitwise_op.mask, op->len);
 			/* Stop execution on error. */
 			if (ret)
 				return ret;
 			break;
 		case CPU_AND_OP:
-			ret = do_cpu_op_and((void __user *)op->u.bitwise_op.p,
+			ret = do_cpu_op_fn(op_and_fn,
+					(void __user *)op->u.bitwise_op.p,
 					op->u.bitwise_op.mask, op->len);
 			/* Stop execution on error. */
 			if (ret)
 				return ret;
 			break;
 		case CPU_XOR_OP:
-			ret = do_cpu_op_xor((void __user *)op->u.bitwise_op.p,
+			ret = do_cpu_op_fn(op_xor_fn,
+					(void __user *)op->u.bitwise_op.p,
 					op->u.bitwise_op.mask, op->len);
 			/* Stop execution on error. */
 			if (ret)
 				return ret;
 			break;
 		case CPU_LSHIFT_OP:
-			ret = do_cpu_op_lshift((void __user *)op->u.shift_op.p,
+			ret = do_cpu_op_fn(op_lshift_fn,
+					(void __user *)op->u.shift_op.p,
 					op->u.shift_op.bits, op->len);
 			/* Stop execution on error. */
 			if (ret)
 				return ret;
 			break;
 		case CPU_RSHIFT_OP:
-			ret = do_cpu_op_rshift((void __user *)op->u.shift_op.p,
+			ret = do_cpu_op_fn(op_rshift_fn,
+					(void __user *)op->u.shift_op.p,
 					op->u.shift_op.bits, op->len);
 			/* Stop execution on error. */
 			if (ret)
