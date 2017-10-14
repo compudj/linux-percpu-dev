@@ -78,6 +78,7 @@ do { \
 		RSEQ_INJECT_ASM(5) \
 		_teardown \
 		".pushsection __rseq_failure, \"a\"\n\t" \
+		".long " __stringify(RSEQ_SIG) "\n\t" \
 		"4:\n\t" \
 		_teardown \
 		"jmp %l[failure]\n\t" \
@@ -220,6 +221,7 @@ do { \
 		RSEQ_INJECT_ASM(5) \
 		_teardown \
 		".pushsection __rseq_failure, \"a\"\n\t" \
+		".long " __stringify(RSEQ_SIG) "\n\t" \
 		"4:\n\t" \
 		_teardown \
 		"jmp %l[failure]\n\t" \
