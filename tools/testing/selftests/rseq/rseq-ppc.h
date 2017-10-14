@@ -89,6 +89,7 @@ do {									\
 		RSEQ_INJECT_ASM(5) \
 		_teardown \
 		"b 5f\n\t" \
+		".long " __stringify(RSEQ_SIG) "\n\t" \
 		"4:\n\t" \
 		_teardown \
 		"b %l[failure]\n\t" \
@@ -191,6 +192,7 @@ do {									\
 		RSEQ_INJECT_ASM(5) \
 		_teardown \
 		"b 5f\n\t" \
+		".long " __stringify(RSEQ_SIG) "\n\t" \
 		"4:\n\t" \
 		_teardown \
 		"b %l[failure]\n\t" \

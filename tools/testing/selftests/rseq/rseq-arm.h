@@ -79,6 +79,7 @@ do { \
 		".balign 32\n\t" \
 		"3:\n\t" \
 		".word 1b, 0x0, 2b, 0x0, 5f, 0x0, 0x0, 0x0\n\t" \
+		".long " __stringify(RSEQ_SIG) "\n\t" \
 		"5:\n\t" \
 		_teardown \
 		"b %l[failure]\n\t" \
