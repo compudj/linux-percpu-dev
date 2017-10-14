@@ -71,6 +71,11 @@ extern __thread volatile struct rseq __rseq_abi;
 #define WRITE_ONCE(x, v)	__extension__ ({ ACCESS_ONCE(x) = (v); })
 #define READ_ONCE(x)		ACCESS_ONCE(x)
 
+#define __stringify_1(x)	#x
+#define __stringify(x)		__stringify_1(x)
+
+#define RSEQ_SIG	0x53053053
+
 #if defined(__x86_64__) || defined(__i386__)
 #include <rseq-x86.h>
 #elif defined(__ARMEL__)
