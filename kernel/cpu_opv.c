@@ -159,6 +159,19 @@ static unsigned long cpu_op_range_nr_pages(unsigned long addr,
 	return ((addr + len - 1) >> PAGE_SHIFT) - (addr >> PAGE_SHIFT) + 1;
 }
 
+/* Return true if those pages are ram, else false. */
+static bool cpu_op_check_zone_device_pages(struct page **pages,
+		unsigned long nr_pages)
+{
+	unsigned long i;
+
+	for (i = 0; i < nr_pages; i++) {
+		if (is_zone_device_page(pages[i]))
+			return true;
+	}
+	return false;
+}
+
 static int cpu_op_pin_pages(unsigned long addr, unsigned long len,
 		struct page ***pinned_pages_ptr, size_t *nr_pinned)
 {
@@ -186,10 +199,19 @@ static int cpu_op_pin_pages(unsigned long addr, unsigned long len,
 			put_page(pages[0]);
 		return -EFAULT;
 	}
+	/* Refuse device pages. */
+	if (cpu_op_check_zone_device_pages(pages, nr_pages))
+		goto error_device;
 	(*pinned_pages_ptr)[(*nr_pinned)++] = pages[0];
 	if (nr_pages > 1)
 		(*pinned_pages_ptr)[(*nr_pinned)++] = pages[1];
 	return 0;
+
+error_device:
+	put_page(pages[0]);
+	if (nr_pages > 1)
+		put_page(pages[1]);
+	return -EFAULT;
 }
 
 static int cpu_opv_pin_pages(struct cpu_op *cpuop, int cpuopcnt,
