@@ -45,7 +45,8 @@
 #endif
 
 enum rseq_flags {
-	RSEQ_FORCE_UNREGISTER = (1 << 0),
+	RSEQ_FLAG_UNREGISTER = (1 << 0),
+	RSEQ_FLAG_FORCE_UNREGISTER = (1 << 1),
 };
 
 enum rseq_cs_flags {
@@ -91,8 +92,9 @@ union rseq_cpu_event {
 };
 
 /*
- * struct rseq is aligned on 4 * 8 bytes to ensure it is always
- * contained within a single cache-line.
+ * struct rseq is aligned on 8 * 8 bytes to ensure it is always
+ * contained within a single cache-line, and keep room for padding
+ * for future extension.
  */
 struct rseq {
 	union rseq_cpu_event u;
@@ -126,6 +128,7 @@ struct rseq {
 	 *     counter increment on migration for this thread.
 	 */
 	uint32_t flags;
-} __attribute__((aligned(4 * sizeof(uint64_t))));
+	/* 28 bytes of zero-initialized padding. */
+} __attribute__((aligned(8 * sizeof(uint64_t))));
 
 #endif /* _UAPI_LINUX_RSEQ_H */
