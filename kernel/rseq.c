@@ -146,6 +146,21 @@ static bool rseq_update_cpu_id_event_counter(struct task_struct *t,
 	return true;
 }
 
+static bool rseq_reset_rseq_cpu_event(struct task_struct *t)
+{
+	union rseq_cpu_event u;
+
+	/*
+	 * Reset cpu_id to -1, so any user coming in after unregistration can
+	 * figure out that rseq needs to be registered again.
+	 */
+	u.e.cpu_id = -1;
+	u.e.event_counter = 0;
+	if (__put_user(u.v, &t->rseq->u.v))
+		return false;
+	return true;
+}
+
 static bool rseq_get_rseq_cs(struct task_struct *t,
 		void __user **start_ip,
 		void __user **post_commit_ip,
@@ -309,22 +324,16 @@ error:
 SYSCALL_DEFINE3(rseq, struct rseq __user *, rseq, int, flags,
 		uint32_t, sig)
 {
-	if (!rseq) {
+	if (flags & RSEQ_FLAG_UNREGISTER) {
 		/* Unregister rseq for current thread. */
-		if (unlikely(flags & ~RSEQ_FORCE_UNREGISTER))
+		if (current->rseq != rseq || !current->rseq)
 			return -EINVAL;
-		if (flags & RSEQ_FORCE_UNREGISTER) {
-			current->rseq = NULL;
-			current->rseq_sig = 0;
-			current->rseq_refcount = 0;
-			return 0;
-		}
-		if (!current->rseq_refcount)
-			return -ENOENT;
-		if (!--current->rseq_refcount) {
-			current->rseq = NULL;
-			current->rseq_sig = 0;
-		}
+		if (current->rseq_sig != sig)
+			return -EPERM;
+		if (!rseq_reset_rseq_cpu_event(current))
+			return -EFAULT;
+		current->rseq = NULL;
+		current->rseq_sig = 0;
 		return 0;
 	}
 
@@ -337,28 +346,23 @@ SYSCALL_DEFINE3(rseq, struct rseq __user *, rseq, int, flags,
 		 * the provided address differs from the prior
 		 * one.
 		 */
-		BUG_ON(!current->rseq_refcount);
 		if (current->rseq != rseq)
-			return -EBUSY;
+			return -EINVAL;
 		if (current->rseq_sig != sig)
 			return -EPERM;
-		if (current->rseq_refcount == UINT_MAX)
-			return -EOVERFLOW;
-		current->rseq_refcount++;
+		return -EBUSY;	/* Already registered. */
 	} else {
 		/*
 		 * If there was no rseq previously registered,
 		 * we need to ensure the provided rseq is
 		 * properly aligned and valid.
 		 */
-		BUG_ON(current->rseq_refcount);
 		if (!IS_ALIGNED((unsigned long)rseq, __alignof__(*rseq)))
 			return -EINVAL;
 		if (!access_ok(VERIFY_WRITE, rseq, sizeof(*rseq)))
 			return -EFAULT;
 		current->rseq = rseq;
 		current->rseq_sig = sig;
-		current->rseq_refcount = 1;
 		/*
 		 * If rseq was previously inactive, and has just
 		 * been registered, ensure the cpu_id and

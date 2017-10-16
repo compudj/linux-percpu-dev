@@ -45,7 +45,7 @@
 #endif
 
 enum rseq_flags {
-	RSEQ_FORCE_UNREGISTER = (1 << 0),
+	RSEQ_FLAG_UNREGISTER = (1 << 0),
 };
 
 enum rseq_cs_flags {
@@ -93,6 +93,8 @@ union rseq_cpu_event {
 /*
  * struct rseq is aligned on 4 * 8 bytes to ensure it is always
  * contained within a single cache-line.
+ *
+ * A single struct rseq per thread is allowed.
  */
 struct rseq {
 	union rseq_cpu_event u;

@@ -981,7 +981,6 @@ struct task_struct {
 	struct rseq __user *rseq;
 	u32 rseq_sig;
 	u32 rseq_event_counter;
-	unsigned int rseq_refcount;
 	bool rseq_preempt, rseq_signal, rseq_migrate;
 #endif
 
@@ -1699,12 +1698,10 @@ static inline void rseq_fork(struct task_struct *t, unsigned long clone_flags)
 		t->rseq = NULL;
 		t->rseq_sig = 0;
 		t->rseq_event_counter = 0;
-		t->rseq_refcount = 0;
 	} else {
 		t->rseq = current->rseq;
 		t->rseq_sig = current->rseq_sig;
 		t->rseq_event_counter = current->rseq_event_counter;
-		t->rseq_refcount = current->rseq_refcount;
 		rseq_set_notify_resume(t);
 	}
 }
@@ -1713,7 +1710,6 @@ static inline void rseq_execve(struct task_struct *t)
 	t->rseq = NULL;
 	t->rseq_sig = 0;
 	t->rseq_event_counter = 0;
-	t->rseq_refcount = 0;
 }
 static inline void rseq_sched_out(struct task_struct *t)
 {
