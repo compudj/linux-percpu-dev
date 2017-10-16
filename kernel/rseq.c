@@ -309,21 +309,26 @@ error:
 SYSCALL_DEFINE3(rseq, struct rseq __user *, rseq, int, flags,
 		uint32_t, sig)
 {
-	if (!rseq) {
+	if (flags & (RSEQ_FLAG_UNREGISTER | RSEQ_FLAG_FORCE_UNREGISTER)) {
 		/* Unregister rseq for current thread. */
-		if (unlikely(flags & ~RSEQ_FORCE_UNREGISTER))
+		if (current->rseq_sig != sig)
+			return -EPERM;
+		if (current->rseq != rseq || !current->rseq)
 			return -EINVAL;
-		if (flags & RSEQ_FORCE_UNREGISTER) {
+		if (!current->rseq_refcount)
+			return -ENOENT;
+		/*
+		 * Ensure we don't keep a rseq_cs reference to memory that will
+		 * be unmapped after unregistration.
+		 */
+		if (clear_user(&current->rseq->rseq_cs,
+				sizeof(current->rseq->rseq_cs)))
+			return -EFAULT;
+		if ((flags & RSEQ_FLAG_FORCE_UNREGISTER)
+				|| !--current->rseq_refcount) {
 			current->rseq = NULL;
 			current->rseq_sig = 0;
 			current->rseq_refcount = 0;
-			return 0;
-		}
-		if (!current->rseq_refcount)
-			return -ENOENT;
-		if (!--current->rseq_refcount) {
-			current->rseq = NULL;
-			current->rseq_sig = 0;
 		}
 		return 0;
 	}
