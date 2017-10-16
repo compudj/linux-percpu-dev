@@ -32,7 +32,6 @@
 __attribute__((weak)) __thread volatile struct rseq __rseq_abi = {
 	.u.e.cpu_id = -1,
 };
-__attribute__((weak)) uint32_t rseq_sig = RSEQ_SIG;
 
 static int sys_rseq(volatile struct rseq *rseq_abi, int flags, uint32_t sig)
 {
@@ -43,7 +42,7 @@ int rseq_register_current_thread(void)
 {
 	int rc;
 
-	rc = sys_rseq(&__rseq_abi, 0, rseq_sig);
+	rc = sys_rseq(&__rseq_abi, 0, RSEQ_SIG);
 	if (rc) {
 		fprintf(stderr, "Error: sys_rseq(...) failed(%d): %s\n",
 			errno, strerror(errno));
@@ -57,7 +56,7 @@ int rseq_unregister_current_thread(void)
 {
 	int rc;
 
-	rc = sys_rseq(NULL, 0, 0);
+	rc = sys_rseq(&__rseq_abi, RSEQ_FLAG_UNREGISTER, RSEQ_SIG);
 	if (rc) {
 		fprintf(stderr, "Error: sys_rseq(...) failed(%d): %s\n",
 			errno, strerror(errno));
