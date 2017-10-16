@@ -146,6 +146,21 @@ static bool rseq_update_cpu_id_event_counter(struct task_struct *t,
 	return true;
 }
 
+static bool rseq_reset_rseq_cpu_event(struct task_struct *t)
+{
+	union rseq_cpu_event u;
+
+	/*
+	 * Reset cpu_id to -1, so any user coming in after unregistration can
+	 * figure out that rseq needs to be registered again.
+	 */
+	u.e.cpu_id = -1;
+	u.e.event_counter = 0;
+	if (__put_user(u.v, &t->rseq->u.v))
+		return false;
+	return true;
+}
+
 static bool rseq_get_rseq_cs(struct task_struct *t,
 		void __user **start_ip,
 		void __user **post_commit_ip,
@@ -326,6 +341,8 @@ SYSCALL_DEFINE3(rseq, struct rseq __user *, rseq, int, flags,
 			return -EFAULT;
 		if ((flags & RSEQ_FLAG_FORCE_UNREGISTER)
 				|| !--current->rseq_refcount) {
+			if (!rseq_reset_rseq_cpu_event(current))
+				return -EFAULT;
 			current->rseq = NULL;
 			current->rseq_sig = 0;
 			current->rseq_refcount = 0;
