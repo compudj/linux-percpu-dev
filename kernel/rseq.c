@@ -324,29 +324,16 @@ error:
 SYSCALL_DEFINE3(rseq, struct rseq __user *, rseq, int, flags,
 		uint32_t, sig)
 {
-	if (flags & (RSEQ_FLAG_UNREGISTER | RSEQ_FLAG_FORCE_UNREGISTER)) {
+	if (flags & RSEQ_FLAG_UNREGISTER) {
 		/* Unregister rseq for current thread. */
-		if (current->rseq_sig != sig)
-			return -EPERM;
 		if (current->rseq != rseq || !current->rseq)
 			return -EINVAL;
-		if (!current->rseq_refcount)
-			return -ENOENT;
-		/*
-		 * Ensure we don't keep a rseq_cs reference to memory that will
-		 * be unmapped after unregistration.
-		 */
-		if (clear_user(&current->rseq->rseq_cs,
-				sizeof(current->rseq->rseq_cs)))
+		if (current->rseq_sig != sig)
+			return -EPERM;
+		if (!rseq_reset_rseq_cpu_event(current))
 			return -EFAULT;
-		if ((flags & RSEQ_FLAG_FORCE_UNREGISTER)
-				|| !--current->rseq_refcount) {
-			if (!rseq_reset_rseq_cpu_event(current))
-				return -EFAULT;
-			current->rseq = NULL;
-			current->rseq_sig = 0;
-			current->rseq_refcount = 0;
-		}
+		current->rseq = NULL;
+		current->rseq_sig = 0;
 		return 0;
 	}
 
@@ -359,28 +346,23 @@ SYSCALL_DEFINE3(rseq, struct rseq __user *, rseq, int, flags,
 		 * the provided address differs from the prior
 		 * one.
 		 */
-		BUG_ON(!current->rseq_refcount);
 		if (current->rseq != rseq)
-			return -EBUSY;
+			return -EINVAL;
 		if (current->rseq_sig != sig)
 			return -EPERM;
-		if (current->rseq_refcount == UINT_MAX)
-			return -EOVERFLOW;
-		current->rseq_refcount++;
+		return -EBUSY;	/* Already registered. */
 	} else {
 		/*
 		 * If there was no rseq previously registered,
 		 * we need to ensure the provided rseq is
 		 * properly aligned and valid.
 		 */
-		BUG_ON(current->rseq_refcount);
 		if (!IS_ALIGNED((unsigned long)rseq, __alignof__(*rseq)))
 			return -EINVAL;
 		if (!access_ok(VERIFY_WRITE, rseq, sizeof(*rseq)))
 			return -EFAULT;
 		current->rseq = rseq;
 		current->rseq_sig = sig;
-		current->rseq_refcount = 1;
 		/*
 		 * If rseq was previously inactive, and has just
 		 * been registered, ensure the cpu_id and
