@@ -95,19 +95,44 @@ union rseq_cpu_event {
  * struct rseq is aligned on 8 * 8 bytes to ensure it is always
  * contained within a single cache-line, and keep room for padding
  * for future extension.
+ *
+ * A single struct rseq per thread is allowed.
+ *
+ * Libraries wishing to manage the rseq ABI should define struct rseq
+ * with the DEFINE_RSEQ_ABI() macro.
+ *
+ * Those libraries should never be unloaded, and never be loaded with
+ * dlopen RTLD_LOCAL. A library should always consider that both
+ * application and other libraries could be using the __rseq_abi as
+ * well.
+ *
+ * Executables can define struct rseq with the DEFINE_RSEQ_ABI()
+ * macro.
+ *
+ * This overrides any __rseq_abi symbol provided by libraries, and
+ * allows a more efficient TLS accesses.
+ *
+ * Code referring to __rseq_abi (rseq fast-path) should use
+ * DECLARE_RSEQ_ABI() in their header.
  */
 struct rseq {
 	union rseq_cpu_event u;
 	/*
 	 * Restartable sequences rseq_cs field.
-	 * Contains NULL when no critical section is active for the
-	 * current thread, or holds a pointer to the currently active
-	 * struct rseq_cs.
-	 * Updated by user-space at the beginning and end of assembly
-	 * instruction sequence block, and by the kernel when it
-	 * restarts an assembly instruction sequence block. Read by the
-	 * kernel with single-copy atomicity semantics. Aligned on
-	 * 64-bit.
+	 *
+	 * Contains NULL when no critical section is active for the current
+	 * thread, or holds a pointer to the currently active struct rseq_cs.
+	 *
+	 * Updated by user-space at the beginning of assembly instruction
+	 * sequence block, and by the kernel when it restarts an assembly
+	 * instruction sequence block, and when the kernel detects that it
+	 * is preempting or delivering a signal outside of the range
+	 * targeted by the rseq_cs. Also needs to be cleared by user-space
+	 * before reclaiming memory that contains the targeted struct
+	 * rseq_cs.
+	 *
+	 * Read and set by the kernel with single-copy atomicity semantics.
+	 * Aligned on 64-bit.
 	 */
 	RSEQ_FIELD_u32_u64(rseq_cs);
 	/*
