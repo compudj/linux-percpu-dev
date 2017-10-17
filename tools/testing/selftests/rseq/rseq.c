@@ -42,8 +42,11 @@ int rseq_register_current_thread(void)
 
 	rc = sys_rseq(&__rseq_abi, 0, RSEQ_SIG);
 	if (rc) {
-		fprintf(stderr, "Error: sys_rseq(...) failed(%d): %s\n",
-			errno, strerror(errno));
+		if (errno != EBUSY) {
+			fprintf(stderr, "Error: sys_rseq(...) failed(%d): %s\n",
+				errno, strerror(errno));
+			__rseq_abi.u.e.cpu_id = -2;
+		}
 		return -1;
 	}
 	assert(rseq_current_cpu() >= 0);
