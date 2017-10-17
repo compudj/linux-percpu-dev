@@ -131,4 +131,12 @@ struct rseq {
 	/* 28 bytes of zero-initialized padding. */
 } __attribute__((aligned(8 * sizeof(uint64_t))));
 
+#define DEFINE_RSEQ_ABI() \
+	__attribute__((weak)) __thread volatile struct rseq __rseq_abi = { \
+		.u.e.cpu_id = -1, \
+	}
+
+#define DECLARE_RSEQ_ABI() \
+	extern __thread volatile struct rseq __rseq_abi
+
 #endif /* _UAPI_LINUX_RSEQ_H */
