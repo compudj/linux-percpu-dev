@@ -29,7 +29,8 @@
 
 #define ARRAY_SIZE(arr)	(sizeof(arr) / sizeof((arr)[0]))
 
-__attribute__((weak)) __thread volatile struct rseq __rseq_abi = {
+__attribute__((tls_model("initial-exec"))) __thread
+volatile struct rseq __rseq_abi = {
 	.u.e.cpu_id = -1,
 };
 

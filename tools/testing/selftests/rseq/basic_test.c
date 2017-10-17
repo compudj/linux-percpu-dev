@@ -13,7 +13,7 @@
 #include "rseq.h"
 
 volatile int signals_delivered;
-volatile __thread struct rseq_state sigtest_start;
+volatile __thread __attribute__((tls_model("initial-exec"))) struct rseq_state sigtest_start;
 
 void test_cpu_pointer(void)
 {

@@ -29,11 +29,11 @@ static int opt_yield, opt_signal, opt_sleep,
 		opt_disable_rseq, opt_threads = 200,
 		opt_reps = 5000, opt_disable_mod = 0, opt_test = 's';
 
-static __thread unsigned int signals_delivered;
+static __thread __attribute__((tls_model("initial-exec"))) unsigned int signals_delivered;
 
 #ifndef BENCHMARK
 
-static __thread unsigned int yield_mod_cnt, nr_retry;
+static __thread __attribute__((tls_model("initial-exec"))) unsigned int yield_mod_cnt, nr_retry;
 
 #define printf_nobench(fmt, ...)	printf(fmt, ## __VA_ARGS__)
 
