@@ -191,10 +191,12 @@ static bool rseq_get_rseq_cs(struct task_struct *t,
 	 */
 	if (clear_user(&t->rseq->rseq_cs, sizeof(t->rseq->rseq_cs)))
 		return false;
+	if (rseq_cs.version > 0)
+		return false;
+	*cs_flags = rseq_cs.flags;
 	*start_ip = (void __user *)rseq_cs.start_ip;
 	*post_commit_ip = (void __user *)rseq_cs.post_commit_ip;
 	*abort_ip = (void __user *)rseq_cs.abort_ip;
-	*cs_flags = rseq_cs.flags;
 	usig = (u32 __user *)(rseq_cs.abort_ip - sizeof(u32));
 	if (get_user(sig, usig))
 		return false;
@@ -321,18 +323,21 @@ error:
 /*
  * sys_rseq - setup restartable sequences for caller thread.
  */
-SYSCALL_DEFINE3(rseq, struct rseq __user *, rseq, int, flags,
-		uint32_t, sig)
+SYSCALL_DEFINE4(rseq, struct rseq __user *, rseq, uint32_t, rseq_len,
+		int, flags, uint32_t, sig)
 {
 	if (flags & RSEQ_FLAG_UNREGISTER) {
 		/* Unregister rseq for current thread. */
 		if (current->rseq != rseq || !current->rseq)
+			return -EINVAL;
+		if (current->rseq_len != rseq_len)
 			return -EINVAL;
 		if (current->rseq_sig != sig)
 			return -EPERM;
 		if (!rseq_reset_rseq_cpu_event(current))
 			return -EFAULT;
 		current->rseq = NULL;
+		current->rseq_len = 0;
 		current->rseq_sig = 0;
 		return 0;
 	}
@@ -346,7 +351,8 @@ SYSCALL_DEFINE3(rseq, struct rseq __user *, rseq, int, flags,
 		 * the provided address differs from the prior
 		 * one.
 		 */
-		if (current->rseq != rseq)
+		if (current->rseq != rseq
+				|| current->rseq_len != rseq_len)
 			return -EINVAL;
 		if (current->rseq_sig != sig)
 			return -EPERM;
@@ -357,11 +363,13 @@ SYSCALL_DEFINE3(rseq, struct rseq __user *, rseq, int, flags,
 		 * we need to ensure the provided rseq is
 		 * properly aligned and valid.
 		 */
-		if (!IS_ALIGNED((unsigned long)rseq, __alignof__(*rseq)))
+		if (!IS_ALIGNED((unsigned long)rseq, __alignof__(*rseq))
+				|| rseq_len != sizeof(*rseq))
 			return -EINVAL;
-		if (!access_ok(VERIFY_WRITE, rseq, sizeof(*rseq)))
+		if (!access_ok(VERIFY_WRITE, rseq, rseq_len))
 			return -EFAULT;
 		current->rseq = rseq;
+		current->rseq_len = rseq_len;
 		current->rseq_sig = sig;
 		/*
 		 * If rseq was previously inactive, and has just
