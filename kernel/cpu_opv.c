@@ -74,11 +74,11 @@ static DEFINE_MUTEX(cpu_opv_offline_lock);
  * execution on that CPU, without generating any page fault.
  * 
  * A maximum limit of 16 operations per cpu_opv syscall invocation is
- * enforced, so user-space cannot generate a too long preempt-off
- * critical section. Each operation is also limited a length of
- * PAGE_SIZE bytes, meaning that an operation can touch a maximum of 4
- * pages (memcpy: 2 pages for source, 2 pages for destination if
- * addresses are not aligned on page boundaries).
+ * enforced, and a overall maximum length sum, so user-space cannot
+ * generate a too long preempt-off critical section. Each operation is
+ * also limited a length of PAGE_SIZE bytes, meaning that an operation
+ * can touch a maximum of 4 pages (memcpy: 2 pages for source, 2 pages
+ * for destination if addresses are not aligned on page boundaries).
  * 
  * If the thread is not running on the requested CPU, a new
  * push_task_to_cpu() is invoked to migrate the task to the requested
@@ -98,10 +98,12 @@ static DEFINE_MUTEX(cpu_opv_offline_lock);
 static int cpu_opv_check(struct cpu_op *cpuop, int cpuopcnt)
 {
 	int i;
+	uint32_t sum = 0;
 
 	for (i = 0; i < cpuopcnt; i++) {
 		struct cpu_op *op = &cpuop[i];
 
+		sum += op->len;
 		switch (op->op) {
 		case CPU_COMPARE_EQ_OP:
 		case CPU_COMPARE_NE_OP:
@@ -150,6 +152,8 @@ static int cpu_opv_check(struct cpu_op *cpuop, int cpuopcnt)
 			return -EINVAL;
 		}
 	}
+	if (sum > CPU_OP_VEC_DATA_LEN_MAX)
+		return -EINVAL;
 	return 0;
 }
 

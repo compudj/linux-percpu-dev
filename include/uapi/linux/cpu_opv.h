@@ -46,7 +46,18 @@
 
 #define CPU_OP_VEC_LEN_MAX		16
 #define CPU_OP_ARG_LEN_MAX		24
+/* Max. data len per operation. */
 #define CPU_OP_DATA_LEN_MAX		PAGE_SIZE
+/*
+ * Max. data len for overall vector. We to restrict the amount of
+ * user-space data touched by the kernel in non-preemptible context so
+ * we do not introduce long scheduler latencies.
+ * This allows one copy of up to 4096 bytes, and 15 operations touching
+ * 8 bytes each.
+ * This limit is applied to the sum of length specified for all
+ * operations in a vector.
+ */
+#define CPU_OP_VEC_DATA_LEN_MAX		(4096 + 15*8)
 #define CPU_OP_MAX_PAGES		4	/* Max. pages per op. */
 
 enum cpu_op_type {
