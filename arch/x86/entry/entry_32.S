@@ -523,6 +523,11 @@ restore_all_notrace:
 restore_nocheck:
 	RESTORE_REGS 4				# skip orig_eax/error_code
 irq_return:
+	/*
+	 * ARCH_HAS_MEMBARRIER_SYNC_CORE rely on iret core serialization
+	 * when returning from IPI handler and when returning from
+	 * scheduler to user-space.
+	 */
 	INTERRUPT_RETURN
 .section .fixup, "ax"
 ENTRY(iret_exc	)
