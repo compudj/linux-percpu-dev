@@ -235,6 +235,14 @@ enum {
 #include <asm/membarrier.h>
 #endif
 
+static inline void membarrier_mm_sync_core_before_usermode(struct mm_struct *mm)
+{
+	if (likely(!(atomic_read(&mm->membarrier_state) &
+			MEMBARRIER_STATE_PRIVATE_EXPEDITED_SYNC_CORE)))
+		return;
+	sync_core_before_usermode();
+}
+
 static inline void membarrier_execve(struct task_struct *t)
 {
 	atomic_set(&t->mm->membarrier_state, 0);
@@ -247,6 +255,9 @@ static inline void membarrier_arch_switch_mm(struct mm_struct *prev,
 }
 #endif
 static inline void membarrier_execve(struct task_struct *t)
+{
+}
+static inline void membarrier_mm_sync_core_before_usermode(struct mm_struct *mm)
 {
 }
 #endif
