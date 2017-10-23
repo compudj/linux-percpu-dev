@@ -54,8 +54,8 @@
  *
  * Stores are performed at the very end of the restartable sequence
  * assembly block. Each assembly block within rseq_finish() defines a
- * "struct rseq_cs" structure which describes the start_ip and
- * post_commit_ip addresses, as well as the abort_ip address where the
+ * "struct rseq_cs" structure which describes the start_ip address and
+ * post_commit_offset, as well as the abort_ip address where the
  * kernel should move the thread instruction pointer if a rseq critical
  * section assembly block is preempted or if a signal is delivered on
  * top of a rseq critical section assembly block.
@@ -163,7 +163,7 @@ static bool rseq_reset_rseq_cpu_event(struct task_struct *t)
 
 static bool rseq_get_rseq_cs(struct task_struct *t,
 		void __user **start_ip,
-		void __user **post_commit_ip,
+		unsigned long *post_commit_offset,
 		void __user **abort_ip,
 		uint32_t *cs_flags)
 {
@@ -195,7 +195,7 @@ static bool rseq_get_rseq_cs(struct task_struct *t,
 		return false;
 	*cs_flags = rseq_cs.flags;
 	*start_ip = (void __user *)rseq_cs.start_ip;
-	*post_commit_ip = (void __user *)rseq_cs.post_commit_ip;
+	*post_commit_offset = (unsigned long)rseq_cs.post_commit_offset;
 	*abort_ip = (void __user *)rseq_cs.abort_ip;
 	usig = (u32 __user *)(rseq_cs.abort_ip - sizeof(u32));
 	if (get_user(sig, usig))
@@ -255,15 +255,15 @@ static int rseq_ip_fixup(struct pt_regs *regs)
 {
 	struct task_struct *t = current;
 	void __user *start_ip = NULL;
-	void __user *post_commit_ip = NULL;
+	unsigned long post_commit_offset = 0;
 	void __user *abort_ip = NULL;
 	uint32_t cs_flags = 0;
 	int ret;
 
-	ret = rseq_get_rseq_cs(t, &start_ip, &post_commit_ip, &abort_ip,
+	ret = rseq_get_rseq_cs(t, &start_ip, &post_commit_offset, &abort_ip,
 			&cs_flags);
 	trace_rseq_ip_fixup((void __user *)instruction_pointer(regs),
-		start_ip, post_commit_ip, abort_ip, t->rseq_event_counter,
+		start_ip, post_commit_offset, abort_ip, t->rseq_event_counter,
 		ret);
 	if (!ret)
 		return -EFAULT;
@@ -273,10 +273,14 @@ static int rseq_ip_fixup(struct pt_regs *regs)
 		return -EFAULT;
 	if (!ret)
 		return 0;
-
-	/* Handle potentially not being within a critical section. */
-	if ((void __user *)instruction_pointer(regs) >= post_commit_ip ||
-			(void __user *)instruction_pointer(regs) < start_ip)
+	/*
+	 * Handle potentially not being within a critical section.
+	 * Unsigned comparison will be true when
+	 * ip < start_ip (wrap-around to large values), and when
+	 * ip >= start_ip + post_commit_offset.
+	 */
+	if ((unsigned long)instruction_pointer(regs) - (unsigned long)start_ip
+			>= post_commit_offset)
 		return 1;
 
 	/*

@@ -63,7 +63,7 @@ struct rseq_cs {
 	uint32_t version;	/* Version of this structure. */
 	uint32_t flags;		/* enum rseq_cs_flags */
 	RSEQ_FIELD_u32_u64(start_ip);
-	RSEQ_FIELD_u32_u64(post_commit_ip);
+	RSEQ_FIELD_u32_u64(post_commit_offset);	/* From start_ip */
 	RSEQ_FIELD_u32_u64(abort_ip);
 } __attribute__((aligned(4 * sizeof(uint64_t))));
 

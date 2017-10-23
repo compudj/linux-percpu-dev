@@ -67,7 +67,7 @@ do {									\
 		".balign 32\n\t" \
 		"3:\n\t" \
 		".long 0x0, 0x0\n\t" \
-		".quad 1f, 2f, 4f\n\t" \
+		".quad 1f, 2f-1f, 4f\n\t" \
 		".popsection\n\t" \
 		"1:\n\t" \
 		_setup \
@@ -173,7 +173,7 @@ do {									\
 		".balign 32\n\t" \
 		"3:\n\t" \
 		/* 32-bit only supported on BE */ \
-		".long 0x0, 0x0, 0x0, 1f, 0x0, 2f, 0x0, 4f\n\t" \
+		".long 0x0, 0x0, 0x0, 1f, 0x0, 2f-1f, 0x0, 4f\n\t" \
 		".popsection\n\t" \
 		"1:\n\t" \
 		_setup \

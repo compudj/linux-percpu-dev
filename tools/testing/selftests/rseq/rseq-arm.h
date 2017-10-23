@@ -58,7 +58,7 @@ do { \
 	__asm__ __volatile__ goto ( \
 		".pushsection __rseq_table, \"aw\"\n\t" \
 		".balign 32\n\t" \
-		".word 0x0, 0x0, 1f, 0x0, 2f, 0x0, 5f, 0x0\n\t" \
+		".word 0x0, 0x0, 1f, 0x0, 2f-1f, 0x0, 5f, 0x0\n\t" \
 		".popsection\n\t" \
 		"1:\n\t" \
 		_setup \
@@ -78,7 +78,7 @@ do { \
 		"b 4f\n\t" \
 		".balign 32\n\t" \
 		"3:\n\t" \
-		".word 0x0, 0x0, 1b, 0x0, 2b, 0x0, 5f, 0x0\n\t" \
+		".word 0x0, 0x0, 1b, 0x0, 2b-1b, 0x0, 5f, 0x0\n\t" \
 		".long " __stringify(RSEQ_SIG) "\n\t" \
 		"5:\n\t" \
 		_teardown \
