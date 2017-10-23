@@ -60,8 +60,8 @@ do { \
 		".pushsection __rseq_table, \"aw\"\n\t" \
 		".balign 32\n\t" \
 		"3:\n\t" \
-		".quad 1f, 2f, 4f\n\t" \
 		".long 0x0, 0x0\n\t" \
+		".quad 1f, 2f, 4f\n\t" \
 		".popsection\n\t" \
 		"1:\n\t" \
 		_setup \
@@ -204,7 +204,7 @@ do { \
 		".pushsection __rseq_table, \"aw\"\n\t" \
 		".balign 32\n\t" \
 		"3:\n\t" \
-		".long 1f, 0x0, 2f, 0x0, 4f, 0x0, 0x0, 0x0\n\t" \
+		".long 0x0, 0x0, 1f, 0x0, 2f, 0x0, 4f, 0x0\n\t" \
 		".popsection\n\t" \
 		"1:\n\t" \
 		_setup \
