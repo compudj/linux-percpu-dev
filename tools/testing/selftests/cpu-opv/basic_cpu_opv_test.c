@@ -17,6 +17,7 @@
 #define ARRAY_SIZE(arr)	(sizeof(arr) / sizeof((arr)[0]))
 
 #define TESTBUFLEN	4096
+#define TESTBUFLEN_CMP	16
 
 static int test_compare_eq_op(char *a, char *b, size_t len)
 {
@@ -196,22 +197,22 @@ static int test_2compare_eq_op(char *a, char *b, char *c, char *d,
 static int test_2compare_eq_index(void)
 {
 	int i, ret;
-	char buf1[TESTBUFLEN];
-	char buf2[TESTBUFLEN];
-	char buf3[TESTBUFLEN];
-	char buf4[TESTBUFLEN];
+	char buf1[TESTBUFLEN_CMP];
+	char buf2[TESTBUFLEN_CMP];
+	char buf3[TESTBUFLEN_CMP];
+	char buf4[TESTBUFLEN_CMP];
 	const char *test_name = "test_2compare_eq index";
 
 	printf("Testing %s\n", test_name);
 
-	for (i = 0; i < TESTBUFLEN; i++)
+	for (i = 0; i < TESTBUFLEN_CMP; i++)
 		buf1[i] = (char)i;
-	memset(buf2, 0, TESTBUFLEN);
-	memset(buf3, 0, TESTBUFLEN);
-	memset(buf4, 0, TESTBUFLEN);
+	memset(buf2, 0, TESTBUFLEN_CMP);
+	memset(buf3, 0, TESTBUFLEN_CMP);
+	memset(buf4, 0, TESTBUFLEN_CMP);
 
 	/* First compare failure is op[0], expect 1. */
-	ret = test_2compare_eq_op(buf2, buf1, buf4, buf3, TESTBUFLEN);
+	ret = test_2compare_eq_op(buf2, buf1, buf4, buf3, TESTBUFLEN_CMP);
 	if (ret < 0) {
 		printf("%s returned with %d, errno: %s\n",
 			test_name, ret, strerror(errno));
@@ -224,9 +225,9 @@ static int test_2compare_eq_index(void)
 	}
 
 	/* All compares succeed. */
-	for (i = 0; i < TESTBUFLEN; i++)
+	for (i = 0; i < TESTBUFLEN_CMP; i++)
 		buf2[i] = (char)i;
-	ret = test_2compare_eq_op(buf2, buf1, buf4, buf3, TESTBUFLEN);
+	ret = test_2compare_eq_op(buf2, buf1, buf4, buf3, TESTBUFLEN_CMP);
 	if (ret < 0) {
 		printf("%s returned with %d, errno: %s\n",
 			test_name, ret, strerror(errno));
@@ -239,9 +240,9 @@ static int test_2compare_eq_index(void)
 	}
 
 	/* First compare failure is op[1], expect 2. */
-	for (i = 0; i < TESTBUFLEN; i++)
+	for (i = 0; i < TESTBUFLEN_CMP; i++)
 		buf3[i] = (char)i;
-	ret = test_2compare_eq_op(buf2, buf1, buf4, buf3, TESTBUFLEN);
+	ret = test_2compare_eq_op(buf2, buf1, buf4, buf3, TESTBUFLEN_CMP);
 	if (ret < 0) {
 		printf("%s returned with %d, errno: %s\n",
 			test_name, ret, strerror(errno));
@@ -286,21 +287,21 @@ static int test_2compare_ne_op(char *a, char *b, char *c, char *d,
 static int test_2compare_ne_index(void)
 {
 	int i, ret;
-	char buf1[TESTBUFLEN];
-	char buf2[TESTBUFLEN];
-	char buf3[TESTBUFLEN];
-	char buf4[TESTBUFLEN];
+	char buf1[TESTBUFLEN_CMP];
+	char buf2[TESTBUFLEN_CMP];
+	char buf3[TESTBUFLEN_CMP];
+	char buf4[TESTBUFLEN_CMP];
 	const char *test_name = "test_2compare_ne index";
 
 	printf("Testing %s\n", test_name);
 
-	memset(buf1, 0, TESTBUFLEN);
-	memset(buf2, 0, TESTBUFLEN);
-	memset(buf3, 0, TESTBUFLEN);
-	memset(buf4, 0, TESTBUFLEN);
+	memset(buf1, 0, TESTBUFLEN_CMP);
+	memset(buf2, 0, TESTBUFLEN_CMP);
+	memset(buf3, 0, TESTBUFLEN_CMP);
+	memset(buf4, 0, TESTBUFLEN_CMP);
 
 	/* First compare ne failure is op[0], expect 1. */
-	ret = test_2compare_ne_op(buf2, buf1, buf4, buf3, TESTBUFLEN);
+	ret = test_2compare_ne_op(buf2, buf1, buf4, buf3, TESTBUFLEN_CMP);
 	if (ret < 0) {
 		printf("%s returned with %d, errno: %s\n",
 			test_name, ret, strerror(errno));
@@ -313,11 +314,11 @@ static int test_2compare_ne_index(void)
 	}
 
 	/* All compare ne succeed. */
-	for (i = 0; i < TESTBUFLEN; i++)
+	for (i = 0; i < TESTBUFLEN_CMP; i++)
 		buf1[i] = (char)i;
-	for (i = 0; i < TESTBUFLEN; i++)
+	for (i = 0; i < TESTBUFLEN_CMP; i++)
 		buf3[i] = (char)i;
-	ret = test_2compare_ne_op(buf2, buf1, buf4, buf3, TESTBUFLEN);
+	ret = test_2compare_ne_op(buf2, buf1, buf4, buf3, TESTBUFLEN_CMP);
 	if (ret < 0) {
 		printf("%s returned with %d, errno: %s\n",
 			test_name, ret, strerror(errno));
@@ -330,9 +331,9 @@ static int test_2compare_ne_index(void)
 	}
 
 	/* First compare failure is op[1], expect 2. */
-	for (i = 0; i < TESTBUFLEN; i++)
+	for (i = 0; i < TESTBUFLEN_CMP; i++)
 		buf4[i] = (char)i;
-	ret = test_2compare_ne_op(buf2, buf1, buf4, buf3, TESTBUFLEN);
+	ret = test_2compare_ne_op(buf2, buf1, buf4, buf3, TESTBUFLEN_CMP);
 	if (ret < 0) {
 		printf("%s returned with %d, errno: %s\n",
 			test_name, ret, strerror(errno));
