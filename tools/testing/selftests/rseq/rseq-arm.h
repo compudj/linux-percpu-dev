@@ -22,6 +22,8 @@
  * SOFTWARE.
  */
 
+#define RSEQ_SIG	0x53053053
+
 #define smp_mb()	__asm__ __volatile__ ("dmb" : : : "memory")
 #define smp_rmb()	__asm__ __volatile__ ("dmb" : : : "memory")
 #define smp_wmb()	__asm__ __volatile__ ("dmb" : : : "memory")

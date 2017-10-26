@@ -23,6 +23,8 @@
  * SOFTWARE.
  */
 
+#define RSEQ_SIG	0x53053053
+
 #define smp_mb()	__asm__ __volatile__ ("sync" : : : "memory")
 #define smp_lwsync()	__asm__ __volatile__ ("lwsync" : : : "memory")
 #define smp_rmb()	smp_lwsync()

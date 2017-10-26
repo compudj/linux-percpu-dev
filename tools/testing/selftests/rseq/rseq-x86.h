@@ -22,6 +22,8 @@
  * SOFTWARE.
  */
 
+#define RSEQ_SIG	0x53053053
+
 #ifdef __x86_64__
 
 #define smp_mb()	__asm__ __volatile__ ("mfence" : : : "memory")
@@ -77,7 +79,9 @@ do { \
 		"2:\n\t" \
 		RSEQ_INJECT_ASM(5) \
 		_teardown \
-		".pushsection __rseq_failure, \"a\"\n\t" \
+		".pushsection __rseq_failure, \"ax\"\n\t" \
+		/* Disassembler-friendly signature: nopl 0x53053053(%rip). */ \
+		".byte 0x0f, 0x1f, 0x05\n\t" \
 		".long " __stringify(RSEQ_SIG) "\n\t" \
 		"4:\n\t" \
 		_teardown \
@@ -220,7 +224,9 @@ do { \
 		"2:\n\t" \
 		RSEQ_INJECT_ASM(5) \
 		_teardown \
-		".pushsection __rseq_failure, \"a\"\n\t" \
+		".pushsection __rseq_failure, \"ax\"\n\t" \
+		/* Disassembler-friendly signature: nopl 0x53053053. */ \
+		".byte 0x0f, 0x1f, 0x05\n\t" \
 		".long " __stringify(RSEQ_SIG) "\n\t" \
 		"4:\n\t" \
 		_teardown \
