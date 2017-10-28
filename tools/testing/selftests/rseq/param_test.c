@@ -44,6 +44,10 @@ static __thread __attribute__((tls_model("initial-exec"))) unsigned int yield_mo
 	, [loop_cnt_4]"m"(loop_cnt[4]) \
 	, [loop_cnt_5]"m"(loop_cnt[5])
 
+#if defined(__i386__) && defined(__GNUC__) && (__GNUC__ < 4 || (__GNUC__ == 4 && __GNUC_MINOR__ < 9))
+#error "gcc <= 4.8 is known to have register constraints limitations on x86-32 with -O2. Please upgrade to gcc 4.9 or better."
+#endif
+
 #if defined(__x86_64__) || defined(__i386__)
 
 #define INJECT_ASM_REG	"eax"
