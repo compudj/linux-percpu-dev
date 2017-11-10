@@ -68,4 +68,10 @@ do {								\
 
 #endif
 
+#ifndef ARCH_HAS_SYNC_CORE_BEFORE_USERMODE
+static inline sync_core_before_usermode(void)
+{
+}
+#endif
+
 #endif /* _LINUX_PROCESSOR_H */
