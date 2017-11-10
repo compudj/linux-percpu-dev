@@ -59,7 +59,7 @@ struct sched_param {
 #include <linux/gfp.h>
 #include <linux/magic.h>
 #include <linux/cgroup-defs.h>
-#include <linux/processor.h>
+#include <asm/processor.h>
 
 #include <asm/processor.h>
 
@@ -3782,6 +3782,12 @@ void cpufreq_add_update_util_hook(int cpu, struct update_util_data *data,
 				    unsigned int flags));
 void cpufreq_remove_update_util_hook(int cpu);
 #endif /* CONFIG_CPU_FREQ */
+
+#ifndef CONFIG_ARCH_HAS_SYNC_CORE_BEFORE_USERMODE
+static inline void sync_core_before_usermode(void)
+{
+}
+#endif
 
 #ifdef CONFIG_MEMBARRIER
 enum {
