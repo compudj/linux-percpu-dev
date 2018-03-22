@@ -54,6 +54,21 @@ static int test_ops_supported(void)
 	return 0;
 }
 
+#define MADV_UNMAP	20
+#define PAGE_SIZE	4096
+
+void test_unmap_page(void *addr)
+{
+	unsigned long start = (unsigned long)addr;
+
+	start &= ~(PAGE_SIZE - 1);
+
+	if (madvise((void *)start, PAGE_SIZE, MADV_UNMAP) != 0) {
+		perror("madvise");
+		abort();
+	}
+}
+
 static int test_compare_eq_op(char *a, char *b, size_t len)
 {
 	struct cpu_op opvec[] = {
@@ -70,6 +85,7 @@ static int test_compare_eq_op(char *a, char *b, size_t len)
 
 	do {
 		cpu = cpu_op_get_current_cpu();
+		test_unmap_page(opvec);
 		ret = cpu_opv(opvec, ARRAY_SIZE(opvec), cpu, 0);
 	} while (ret == -1 && errno == EAGAIN);
 
@@ -88,6 +104,8 @@ static int test_compare_eq_same(void)
 		buf1[i] = (char)i;
 	for (i = 0; i < TESTBUFLEN; i++)
 		buf2[i] = (char)i;
+	test_unmap_page(buf1);
+	test_unmap_page(buf2);
 	ret = test_compare_eq_op(buf2, buf1, TESTBUFLEN);
 	if (ret < 0) {
 		ksft_exit_fail_msg("%s test: returned with %d, errno = %s\n",
@@ -113,6 +131,8 @@ static int test_compare_eq_diff(void)
 	for (i = 0; i < TESTBUFLEN; i++)
 		buf1[i] = (char)i;
 	memset(buf2, 0, TESTBUFLEN);
+	test_unmap_page(buf1);
+	test_unmap_page(buf2);
 	ret = test_compare_eq_op(buf2, buf1, TESTBUFLEN);
 	if (ret < 0) {
 		ksft_exit_fail_msg("%s test: returned with %d, errno = %s\n",
@@ -144,6 +164,7 @@ static int test_compare_ne_op(char *a, char *b, size_t len)
 
 	do {
 		cpu = cpu_op_get_current_cpu();
+		test_unmap_page(opvec);
 		ret = cpu_opv(opvec, ARRAY_SIZE(opvec), cpu, 0);
 	} while (ret == -1 && errno == EAGAIN);
 
@@ -162,6 +183,8 @@ static int test_compare_ne_same(void)
 		buf1[i] = (char)i;
 	for (i = 0; i < TESTBUFLEN; i++)
 		buf2[i] = (char)i;
+	test_unmap_page(buf1);
+	test_unmap_page(buf2);
 	ret = test_compare_ne_op(buf2, buf1, TESTBUFLEN);
 	if (ret < 0) {
 		ksft_exit_fail_msg("%s test: returned with %d, errno = %s\n",
@@ -187,6 +210,8 @@ static int test_compare_ne_diff(void)
 	for (i = 0; i < TESTBUFLEN; i++)
 		buf1[i] = (char)i;
 	memset(buf2, 0, TESTBUFLEN);
+	test_unmap_page(buf1);
+	test_unmap_page(buf2);
 	ret = test_compare_ne_op(buf2, buf1, TESTBUFLEN);
 	if (ret < 0) {
 		ksft_exit_fail_msg("%s test: returned with %d, errno = %s\n",
@@ -227,6 +252,7 @@ static int test_2compare_eq_op(char *a, char *b, char *c, char *d,
 
 	do {
 		cpu = cpu_op_get_current_cpu();
+		test_unmap_page(opvec);
 		ret = cpu_opv(opvec, ARRAY_SIZE(opvec), cpu, 0);
 	} while (ret == -1 && errno == EAGAIN);
 
@@ -248,6 +274,10 @@ static int test_2compare_eq_index(void)
 	memset(buf3, 0, TESTBUFLEN_CMP);
 	memset(buf4, 0, TESTBUFLEN_CMP);
 
+	test_unmap_page(buf1);
+	test_unmap_page(buf2);
+	test_unmap_page(buf3);
+	test_unmap_page(buf4);
 	/* First compare failure is op[0], expect 1. */
 	ret = test_2compare_eq_op(buf2, buf1, buf4, buf3, TESTBUFLEN_CMP);
 	if (ret < 0) {
@@ -264,6 +294,10 @@ static int test_2compare_eq_index(void)
 	/* All compares succeed. */
 	for (i = 0; i < TESTBUFLEN_CMP; i++)
 		buf2[i] = (char)i;
+	test_unmap_page(buf1);
+	test_unmap_page(buf2);
+	test_unmap_page(buf3);
+	test_unmap_page(buf4);
 	ret = test_2compare_eq_op(buf2, buf1, buf4, buf3, TESTBUFLEN_CMP);
 	if (ret < 0) {
 		ksft_exit_fail_msg("%s test: returned with %d, errno = %s\n",
@@ -279,6 +313,10 @@ static int test_2compare_eq_index(void)
 	/* First compare failure is op[1], expect 2. */
 	for (i = 0; i < TESTBUFLEN_CMP; i++)
 		buf3[i] = (char)i;
+	test_unmap_page(buf1);
+	test_unmap_page(buf2);
+	test_unmap_page(buf3);
+	test_unmap_page(buf4);
 	ret = test_2compare_eq_op(buf2, buf1, buf4, buf3, TESTBUFLEN_CMP);
 	if (ret < 0) {
 		ksft_exit_fail_msg("%s test: returned with %d, errno = %s\n",
@@ -319,6 +357,7 @@ static int test_2compare_ne_op(char *a, char *b, char *c, char *d,
 
 	do {
 		cpu = cpu_op_get_current_cpu();
+		test_unmap_page(opvec);
 		ret = cpu_opv(opvec, ARRAY_SIZE(opvec), cpu, 0);
 	} while (ret == -1 && errno == EAGAIN);
 
@@ -357,6 +396,10 @@ static int test_2compare_ne_index(void)
 		buf1[i] = (char)i;
 	for (i = 0; i < TESTBUFLEN_CMP; i++)
 		buf3[i] = (char)i;
+	test_unmap_page(buf1);
+	test_unmap_page(buf2);
+	test_unmap_page(buf3);
+	test_unmap_page(buf4);
 	ret = test_2compare_ne_op(buf2, buf1, buf4, buf3, TESTBUFLEN_CMP);
 	if (ret < 0) {
 		ksft_exit_fail_msg("%s test: returned with %d, errno = %s\n",
@@ -372,6 +415,10 @@ static int test_2compare_ne_index(void)
 	/* First compare failure is op[1], expect 2. */
 	for (i = 0; i < TESTBUFLEN_CMP; i++)
 		buf4[i] = (char)i;
+	test_unmap_page(buf1);
+	test_unmap_page(buf2);
+	test_unmap_page(buf3);
+	test_unmap_page(buf4);
 	ret = test_2compare_ne_op(buf2, buf1, buf4, buf3, TESTBUFLEN_CMP);
 	if (ret < 0) {
 		ksft_exit_fail_msg("%s test: returned with %d, errno = %s\n",
@@ -403,6 +450,7 @@ static int test_memcpy_op(void *dst, void *src, size_t len)
 
 	do {
 		cpu = cpu_op_get_current_cpu();
+		test_unmap_page(opvec);
 		ret = cpu_opv(opvec, ARRAY_SIZE(opvec), cpu, 0);
 	} while (ret == -1 && errno == EAGAIN);
 
@@ -420,6 +468,8 @@ static int test_memcpy(void)
 	for (i = 0; i < TESTBUFLEN; i++)
 		buf1[i] = (char)i;
 	memset(buf2, 0, TESTBUFLEN);
+	test_unmap_page(buf1);
+	test_unmap_page(buf2);
 	ret = test_memcpy_op(buf2, buf1, TESTBUFLEN);
 	if (ret) {
 		ksft_exit_fail_msg("%s test: returned with %d, errno = %s\n",
@@ -446,6 +496,8 @@ static int test_memcpy_u32(void)
 	/* Test memcpy_u32 */
 	v1 = 42;
 	v2 = 0;
+	test_unmap_page(&v1);
+	test_unmap_page(&v2);
 	ret = test_memcpy_op(&v2, &v1, sizeof(v1));
 	if (ret) {
 		ksft_exit_fail_msg("%s test: returned with %d, errno = %s\n",
@@ -489,6 +541,7 @@ static int test_memcpy_mb_memcpy_op(void *dst1, void *src1,
 
 	do {
 		cpu = cpu_op_get_current_cpu();
+		test_unmap_page(opvec);
 		ret = cpu_opv(opvec, ARRAY_SIZE(opvec), cpu, 0);
 	} while (ret == -1 && errno == EAGAIN);
 
@@ -504,6 +557,9 @@ static int test_memcpy_mb_memcpy(void)
 	/* Test memcpy */
 	v1 = 42;
 	v2 = v3 = 0;
+	test_unmap_page(&v1);
+	test_unmap_page(&v2);
+	test_unmap_page(&v3);
 	ret = test_memcpy_mb_memcpy_op(&v2, &v1, &v3, &v2, sizeof(int));
 	if (ret) {
 		ksft_exit_fail_msg("%s test: returned with %d, errno = %s\n",
@@ -538,6 +594,7 @@ static int test_add(void)
 	const char *test_name = "test_add";
 
 	v = orig_v;
+	test_unmap_page(&v);
 	ret = test_add_op(&v, increment);
 	if (ret) {
 		ksft_exit_fail_msg("%s test: returned with %d, errno = %s\n",
@@ -578,6 +635,7 @@ static int test_two_add_op(int *v, int64_t *increments)
 
 	do {
 		cpu = cpu_op_get_current_cpu();
+		test_unmap_page(opvec);
 		ret = cpu_opv(opvec, ARRAY_SIZE(opvec), cpu, 0);
 	} while (ret == -1 && errno == EAGAIN);
 
@@ -591,6 +649,7 @@ static int test_two_add(void)
 	const char *test_name = "test_two_add";
 
 	v = orig_v;
+	test_unmap_page(&v);
 	ret = test_two_add_op(&v, increments);
 	if (ret) {
 		ksft_exit_fail_msg("%s test: returned with %d, errno = %s\n",
@@ -623,6 +682,7 @@ static int test_or_op(int *v, uint64_t mask)
 
 	do {
 		cpu = cpu_op_get_current_cpu();
+		test_unmap_page(opvec);
 		ret = cpu_opv(opvec, ARRAY_SIZE(opvec), cpu, 0);
 	} while (ret == -1 && errno == EAGAIN);
 
@@ -636,6 +696,7 @@ static int test_or(void)
 	const char *test_name = "test_or";
 
 	v = orig_v;
+	test_unmap_page(&v);
 	ret = test_or_op(&v, mask);
 	if (ret) {
 		ksft_exit_fail_msg("%s test: returned with %d, errno = %s\n",
@@ -680,6 +741,7 @@ static int test_and(void)
 	const char *test_name = "test_and";
 
 	v = orig_v;
+	test_unmap_page(&v);
 	ret = test_and_op(&v, mask);
 	if (ret) {
 		ksft_exit_fail_msg("%s test: returned with %d, errno = %s\n",
@@ -711,6 +773,7 @@ static int test_xor_op(int *v, uint64_t mask)
 
 	do {
 		cpu = cpu_op_get_current_cpu();
+		test_unmap_page(opvec);
 		ret = cpu_opv(opvec, ARRAY_SIZE(opvec), cpu, 0);
 	} while (ret == -1 && errno == EAGAIN);
 
@@ -724,6 +787,7 @@ static int test_xor(void)
 	const char *test_name = "test_xor";
 
 	v = orig_v;
+	test_unmap_page(&v);
 	ret = test_xor_op(&v, mask);
 	if (ret) {
 		ksft_exit_fail_msg("%s test: returned with %d, errno = %s\n",
@@ -755,6 +819,7 @@ static int test_lshift_op(int *v, uint32_t bits)
 
 	do {
 		cpu = cpu_op_get_current_cpu();
+		test_unmap_page(opvec);
 		ret = cpu_opv(opvec, ARRAY_SIZE(opvec), cpu, 0);
 	} while (ret == -1 && errno == EAGAIN);
 
@@ -768,6 +833,7 @@ static int test_lshift(void)
 	const char *test_name = "test_lshift";
 
 	v = orig_v;
+	test_unmap_page(&v);
 	ret = test_lshift_op(&v, bits);
 	if (ret) {
 		ksft_exit_fail_msg("%s test: returned with %d, errno = %s\n",
@@ -799,6 +865,7 @@ static int test_rshift_op(int *v, uint32_t bits)
 
 	do {
 		cpu = cpu_op_get_current_cpu();
+		test_unmap_page(opvec);
 		ret = cpu_opv(opvec, ARRAY_SIZE(opvec), cpu, 0);
 	} while (ret == -1 && errno == EAGAIN);
 
@@ -812,6 +879,7 @@ static int test_rshift(void)
 	const char *test_name = "test_rshift";
 
 	v = orig_v;
+	test_unmap_page(&v);
 	ret = test_rshift_op(&v, bits);
 	if (ret) {
 		ksft_exit_fail_msg("%s test: returned with %d, errno = %s\n",
@@ -847,6 +915,10 @@ static int test_cmpxchg_success(void)
 	const char *test_name = "test_cmpxchg success";
 
 	v = orig_v;
+	test_unmap_page(&v);
+	test_unmap_page(&expect);
+	test_unmap_page(&old);
+	test_unmap_page(&n);
 	ret = test_cmpxchg_op(&v, &expect, &old, &n, sizeof(uint64_t));
 	if (ret < 0) {
 		ksft_exit_fail_msg("%s test: ret = %d, errno = %s\n",
@@ -880,6 +952,10 @@ static int test_cmpxchg_fail(void)
 	const char *test_name = "test_cmpxchg fail";
 
 	v = orig_v;
+	test_unmap_page(&v);
+	test_unmap_page(&expect);
+	test_unmap_page(&old);
+	test_unmap_page(&n);
 	ret = test_cmpxchg_op(&v, &expect, &old, &n, sizeof(uint64_t));
 	if (ret < 0) {
 		ksft_exit_fail_msg("%s test: ret = %d, errno = %s\n",
@@ -922,6 +998,7 @@ static int test_memcpy_expect_fault_op(void *dst, void *src, size_t len)
 	int cpu;
 
 	cpu = cpu_op_get_current_cpu();
+	test_unmap_page(opvec);
 	return cpu_opv(opvec, ARRAY_SIZE(opvec), cpu, 0);
 }
 
@@ -932,6 +1009,7 @@ static int test_memcpy_fault(void)
 	const char *test_name = "test_memcpy_fault";
 
 	/* Test memcpy */
+	test_unmap_page(buf1);
 	ret = test_memcpy_op(buf1, NULL, TESTBUFLEN);
 	if (!ret || (ret < 0 && errno != EFAULT)) {
 		ksft_exit_fail_msg("%s test: ret = %d, errno = %s\n",
@@ -939,6 +1017,7 @@ static int test_memcpy_fault(void)
 		return -1;
 	}
 	/* Test memcpy expect fault */
+	test_unmap_page(buf1);
 	ret = test_memcpy_expect_fault_op(buf1, NULL, TESTBUFLEN);
 	if (!ret || (ret < 0 && errno != EAGAIN)) {
 		ksft_exit_fail_msg("%s test: ret = %d, errno = %s\n",
@@ -960,6 +1039,7 @@ static int do_test_unknown_op(void)
 	int cpu;
 
 	cpu = cpu_op_get_current_cpu();
+	test_unmap_page(opvec);
 	return cpu_opv(opvec, ARRAY_SIZE(opvec), cpu, 0);
 }
 
@@ -1001,6 +1081,7 @@ static int do_test_max_ops(void)
 	int cpu;
 
 	cpu = cpu_op_get_current_cpu();
+	test_unmap_page(opvec);
 	return cpu_opv(opvec, ARRAY_SIZE(opvec), cpu, 0);
 }
 
@@ -1043,6 +1124,7 @@ static int do_test_too_many_ops(void)
 	int cpu;
 
 	cpu = cpu_op_get_current_cpu();
+	test_unmap_page(opvec);
 	return cpu_opv(opvec, ARRAY_SIZE(opvec), cpu, 0);
 }
 
@@ -1073,6 +1155,8 @@ static int test_memcpy_single_too_large(void)
 	for (i = 0; i < TESTBUFLEN_PAGE_MAX + 1; i++)
 		buf1[i] = (char)i;
 	memset(buf2, 0, TESTBUFLEN_PAGE_MAX + 1);
+	test_unmap_page(buf1);
+	test_unmap_page(buf2);
 	ret = test_memcpy_op(buf2, buf1, TESTBUFLEN_PAGE_MAX + 1);
 	if (!ret || (ret < 0 && errno != EINVAL)) {
 		ksft_exit_fail_msg("%s test: ret = %d, errno = %s\n",
@@ -1108,6 +1192,7 @@ static int test_memcpy_single_ok_sum_too_large_op(void *dst, void *src,
 
 	do {
 		cpu = cpu_op_get_current_cpu();
+		test_unmap_page(opvec);
 		ret = cpu_opv(opvec, ARRAY_SIZE(opvec), cpu, 0);
 	} while (ret == -1 && errno == EAGAIN);
 
@@ -1125,6 +1210,8 @@ static int test_memcpy_single_ok_sum_too_large(void)
 	for (i = 0; i < TESTBUFLEN; i++)
 		buf1[i] = (char)i;
 	memset(buf2, 0, TESTBUFLEN);
+	test_unmap_page(buf1);
+	test_unmap_page(buf2);
 	ret = test_memcpy_single_ok_sum_too_large_op(buf2, buf1, TESTBUFLEN);
 	if (!ret || (ret < 0 && errno != EINVAL)) {
 		ksft_exit_fail_msg("%s test: ret = %d, errno = %s\n",
@@ -1146,6 +1233,8 @@ int test_page_fault(void)
 	const char *test_name = "test_page_fault";
 
 	for (i = 0; i < NR_PF_ARRAY; i++) {
+		test_unmap_page(pf_array_dst[i]);
+		test_unmap_page(pf_array_src[i]);
 		ret = test_memcpy_op(pf_array_dst[i],
 				     pf_array_src[i],
 				     PF_ARRAY_LEN);
