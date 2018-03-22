@@ -41,6 +41,7 @@ static int madvise_need_mmap_write(int behavior)
 	case MADV_WILLNEED:
 	case MADV_DONTNEED:
 	case MADV_FREE:
+	case MADV_UNMAP:
 		return 0;
 	default:
 		/* be safe, default to 1. list exceptions explicitly */
@@ -440,6 +441,106 @@ next:
 	return 0;
 }
 
+static int madvise_unmap_pte_range(pmd_t *pmd, unsigned long addr,
+				   unsigned long end, struct mm_walk *walk)
+
+{
+	struct mmu_gather *tlb = walk->private;
+	struct mm_struct *mm = tlb->mm;
+	struct vm_area_struct *vma = walk->vma;
+	spinlock_t *ptl;
+	pte_t *orig_pte, *pte, ptent;
+	struct page *page;
+	unsigned long next;
+
+	next = pmd_addr_end(addr, end);
+#if 0
+	if (pmd_trans_huge(*pmd)) {
+		if (madvise_free_huge_pmd(tlb, vma, pmd, addr, next))
+			goto next;
+	}
+#endif
+
+	if (pmd_trans_unstable(pmd))
+		return 0;
+
+	orig_pte = pte = pte_offset_map_lock(mm, pmd, addr, &ptl);
+	arch_enter_lazy_mmu_mode();
+	for (; addr != end; pte++, addr += PAGE_SIZE) {
+		ptent = *pte;
+
+		if (pte_none(ptent))
+			continue;
+		/*
+		 * If its not there, we don't need to make it go away.
+		 */
+		if (!pte_present(ptent))
+			continue;
+
+		page = vm_normal_page(vma, addr, ptent);
+		if (!page)
+			continue;
+
+		/*
+		 * If pmd isn't transhuge but the page is THP and
+		 * is owned by only this process, split it and
+		 * deactivate all pages.
+		 */
+		if (PageTransCompound(page)) {
+			if (page_mapcount(page) != 1)
+				goto out;
+			get_page(page);
+			if (!trylock_page(page)) {
+				put_page(page);
+				goto out;
+			}
+			pte_unmap_unlock(orig_pte, ptl);
+			if (split_huge_page(page)) {
+				unlock_page(page);
+				put_page(page);
+				pte_offset_map_lock(mm, pmd, addr, &ptl);
+				goto out;
+			}
+			put_page(page);
+			unlock_page(page);
+			pte = pte_offset_map_lock(mm, pmd, addr, &ptl);
+			pte--;
+			addr -= PAGE_SIZE;
+			continue;
+		}
+
+		VM_BUG_ON_PAGE(PageTransCompound(page), page);
+
+		get_page(page);
+		if (!trylock_page(page)) {
+			put_page(page);
+			continue;
+		}
+
+		pte_unmap_unlock(orig_pte, ptl);
+
+		if (PageAnon(page) && !PageSwapCache(page)) {
+			if (!add_to_swap(page))
+				goto next_page;
+		}
+
+		try_to_unmap(page, TTU_IGNORE_MLOCK |
+				TTU_IGNORE_ACCESS |
+				TTU_BATCH_FLUSH);
+
+next_page:
+		pte_offset_map_lock(mm, pmd, addr, &ptl);
+		unlock_page(page);
+		put_page(page);
+	}
+out:
+
+	arch_leave_lazy_mmu_mode();
+	pte_unmap_unlock(orig_pte, ptl);
+	cond_resched();
+	return 0;
+}
+
 static void madvise_free_page_range(struct mmu_gather *tlb,
 			     struct vm_area_struct *vma,
 			     unsigned long addr, unsigned long end)
@@ -453,6 +554,50 @@ static void madvise_free_page_range(struct mmu_gather *tlb,
 	tlb_start_vma(tlb, vma);
 	walk_page_range(addr, end, &free_walk);
 	tlb_end_vma(tlb, vma);
+}
+
+static void madvise_unmap_page_range(struct mmu_gather *tlb,
+			     struct vm_area_struct *vma,
+			     unsigned long addr, unsigned long end)
+{
+	struct mm_walk free_walk = {
+		.pmd_entry = madvise_unmap_pte_range,
+		.mm = vma->vm_mm,
+		.private = tlb,
+	};
+
+	tlb_start_vma(tlb, vma);
+	walk_page_range(addr, end, &free_walk);
+	tlb_end_vma(tlb, vma);
+}
+
+static int madvise_unmap_single_vma(struct vm_area_struct *vma,
+			unsigned long start_addr, unsigned long end_addr)
+{
+	unsigned long start, end;
+	struct mm_struct *mm = vma->vm_mm;
+	struct mmu_gather tlb;
+
+	if (vma->vm_flags & (VM_HUGETLB|VM_PFNMAP))
+		 return -EINVAL;
+
+	start = max(vma->vm_start, start_addr);
+	if (start >= vma->vm_end)
+		 return -EINVAL;
+	end = min(vma->vm_end, end_addr);
+	if (end <= vma->vm_start)
+		 return -EINVAL;
+
+	lru_add_drain();
+	tlb_gather_mmu(&tlb, mm, start, end);
+	update_hiwater_rss(mm);
+
+	mmu_notifier_invalidate_range_start(mm, start, end);
+	madvise_unmap_page_range(&tlb, vma, start, end);
+	mmu_notifier_invalidate_range_end(mm, start, end);
+	tlb_finish_mmu(&tlb, start, end);
+
+	return 0;
 }
 
 static int madvise_free_single_vma(struct vm_area_struct *vma,
@@ -483,6 +628,14 @@ static int madvise_free_single_vma(struct vm_area_struct *vma,
 	tlb_finish_mmu(&tlb, start, end);
 
 	return 0;
+}
+
+static long madvise_unmap(struct vm_area_struct *vma,
+			  struct vm_area_struct **prev,
+			  unsigned long start, unsigned long end)
+{
+	*prev = vma;
+	return madvise_unmap_single_vma(vma, start, end);
 }
 
 /*
@@ -686,6 +839,8 @@ madvise_vma(struct vm_area_struct *vma, struct vm_area_struct **prev,
 	case MADV_FREE:
 	case MADV_DONTNEED:
 		return madvise_dontneed_free(vma, prev, start, end, behavior);
+	case MADV_UNMAP:
+		return madvise_unmap(vma, prev, start, end);
 	default:
 		return madvise_behavior(vma, prev, start, end, behavior);
 	}
@@ -720,6 +875,7 @@ madvise_behavior_valid(int behavior)
 	case MADV_SOFT_OFFLINE:
 	case MADV_HWPOISON:
 #endif
+	case MADV_UNMAP:
 		return true;
 
 	default:
