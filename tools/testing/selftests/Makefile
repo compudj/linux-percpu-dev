@@ -8,6 +8,7 @@ TARGETS += cgroup
 TARGETS += clone3
 TARGETS += cpufreq
 TARGETS += cpu-hotplug
+TARGETS += cpu-mutex
 TARGETS += drivers/dma-buf
 TARGETS += efivarfs
 TARGETS += exec
