@@ -33,6 +33,7 @@ TARGETS += netfilter
 TARGETS += networking/timestamping
 TARGETS += nsfs
 TARGETS += pidfd
+TARGETS += pin-on-cpu
 TARGETS += powerpc
 TARGETS += proc
 TARGETS += pstore
