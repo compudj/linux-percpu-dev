@@ -46,6 +46,7 @@ TARGETS += ptrace
 TARGETS += openat2
 TARGETS += rseq
 TARGETS += rtc
+TARGETS += sched-pair-cpu
 TARGETS += seccomp
 TARGETS += sigaltstack
 TARGETS += size

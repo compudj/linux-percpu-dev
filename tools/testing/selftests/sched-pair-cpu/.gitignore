@@ -1,0 +1,6 @@
+basic_percpu_ops_test
+param_test
+param_test_benchmark
+param_test_compare_twice
+sched_pair_cpu_test
+sched_pair_cpu_test_compare_twice
