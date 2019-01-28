@@ -81,12 +81,27 @@ static int membarrier_global_expedited(void)
 
 		rcu_read_lock();
 		p = task_rcu_dereference(&cpu_rq(cpu)->curr);
-		if (p && p->mm && (atomic_read(&p->mm->membarrier_state) &
-				   MEMBARRIER_STATE_GLOBAL_EXPEDITED)) {
-			if (!fallback)
-				__cpumask_set_cpu(cpu, tmpmask);
-			else
-				smp_call_function_single(cpu, ipi_mb, NULL, 1);
+		/*
+		 * Skip this CPU if the runqueue's current task is NULL or if
+		 * it is a kernel thread.
+		 */
+		if (p && READ_ONCE(p->mm)) {
+			bool mm_match;
+
+			/*
+			 * Read p->mm and access membarrier_state while holding
+			 * the task lock to ensure existence of mm.
+			 */
+			task_lock(p);
+			mm_match = p->mm && (atomic_read(&p->mm->membarrier_state) &
+					     MEMBARRIER_STATE_GLOBAL_EXPEDITED);
+			task_unlock(p);
+			if (mm_match) {
+				if (!fallback)
+					__cpumask_set_cpu(cpu, tmpmask);
+				else
+					smp_call_function_single(cpu, ipi_mb, NULL, 1);
+			}
 		}
 		rcu_read_unlock();
 	}
