@@ -14,6 +14,7 @@
  * GNU General Public License for more details.
  */
 #include "sched.h"
+#include <linux/delay.h>
 
 /*
  * Bitmask made from a "or" of all commands within enum membarrier_cmd,
@@ -93,7 +94,7 @@ static int membarrier_global_expedited(void)
 			 * the task lock to ensure existence of mm.
 			 */
 			task_lock(p);
-			mm_match = p->mm && (atomic_read(&p->mm->membarrier_state) &
+			mm_match = p->mm && (mdelay(100), 1) && (atomic_read(&p->mm->membarrier_state) &
 					     MEMBARRIER_STATE_GLOBAL_EXPEDITED);
 			task_unlock(p);
 			if (mm_match) {
