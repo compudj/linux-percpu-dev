@@ -100,7 +100,9 @@ struct rseq {
 	 * instruction sequence block, as well as when the kernel detects that
 	 * it is preempting or delivering a signal outside of the range
 	 * targeted by the rseq_cs. Also needs to be set to NULL by user-space
-	 * before reclaiming memory that contains the targeted struct rseq_cs.
+	 * before reclaiming memory that contains the targeted struct rseq_cs
+	 * or reclaiming memory that contains the code referred to by the
+	 * start_ip and post_commit_offset fields of struct rseq_cs.
 	 *
 	 * Read and set by the kernel. Set by user-space with single-copy
 	 * atomicity semantics. This field should only be updated by the
