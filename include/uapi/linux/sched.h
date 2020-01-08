@@ -145,4 +145,10 @@ struct clone_args {
 			 SCHED_FLAG_KEEP_ALL		| \
 			 SCHED_FLAG_UTIL_CLAMP)
 
+enum cpu_mutex_cmd {
+	CPU_MUTEX_CMD_QUERY				= 0,
+	CPU_MUTEX_CMD_SET				= (1 << 0),
+	CPU_MUTEX_CMD_CLEAR				= (1 << 1),
+};
+
 #endif /* _UAPI_LINUX_SCHED_H */

@@ -1886,6 +1886,9 @@ static int __do_execve_file(int fd, struct filename *filename,
 	current->fs->in_exec = 0;
 	current->in_execve = 0;
 	rseq_execve(current);
+#ifdef CONFIG_SMP
+	current->cpu_mutex = -1;
+#endif
 	acct_update_integrals(current);
 	task_numa_free(current, false);
 	free_bprm(bprm);

@@ -629,6 +629,31 @@ struct wake_q_node {
 	struct wake_q_node *next;
 };
 
+struct kthread_work;
+typedef void (*kthread_work_func_t)(struct kthread_work *work);
+void kthread_delayed_work_timer_fn(struct timer_list *t);
+
+enum {
+	KTW_FREEZABLE		= 1 << 0,	/* freeze during suspend */
+};
+
+struct kthread_worker {
+	unsigned int		flags;
+	raw_spinlock_t		lock;
+	struct list_head	work_list;
+	struct list_head	delayed_work_list;
+	struct task_struct	*task;
+	struct kthread_work	*current_work;
+};
+
+struct kthread_work {
+	struct list_head	node;
+	kthread_work_func_t	func;
+	struct kthread_worker	*worker;
+	/* Number of canceling calls that are running at the moment. */
+	int			canceling;
+};
+
 struct task_struct {
 #ifdef CONFIG_THREAD_INFO_IN_TASK
 	/*
@@ -659,6 +684,8 @@ struct task_struct {
 	/* Current CPU: */
 	unsigned int			cpu;
 #endif
+	int				cpu_mutex;
+	struct kthread_work		cpu_mutex_work;
 	unsigned int			wakee_flips;
 	unsigned long			wakee_flip_decay_ts;
 	struct task_struct		*last_wakee;
@@ -1878,6 +1905,8 @@ extern long sched_getaffinity(pid_t pid, struct cpumask *mask);
 #define TASK_SIZE_OF(tsk)	TASK_SIZE
 #endif
 
+void __cpu_mutex_handle_notify_resume(struct ksignal *sig, struct pt_regs *regs);
+
 #ifdef CONFIG_RSEQ
 
 /*
@@ -1900,6 +1929,8 @@ static inline void rseq_set_notify_resume(struct task_struct *t)
 {
 	if (t->rseq)
 		set_tsk_thread_flag(t, TIF_NOTIFY_RESUME);
+	if (current->cpu_mutex >= 0)
+		set_tsk_thread_flag(t, TIF_NOTIFY_RESUME);
 }
 
 void __rseq_handle_notify_resume(struct ksignal *sig, struct pt_regs *regs);
@@ -1909,6 +1940,8 @@ static inline void rseq_handle_notify_resume(struct ksignal *ksig,
 {
 	if (current->rseq)
 		__rseq_handle_notify_resume(ksig, regs);
+	if (current->cpu_mutex >= 0)
+		__cpu_mutex_handle_notify_resume(ksig, regs);
 }
 
 static inline void rseq_signal_deliver(struct ksignal *ksig,

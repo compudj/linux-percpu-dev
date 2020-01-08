@@ -75,31 +75,6 @@ extern int tsk_fork_get_node(struct task_struct *tsk);
  * respectively.  Queued kthread_works are processed by a kthread
  * running kthread_worker_fn().
  */
-struct kthread_work;
-typedef void (*kthread_work_func_t)(struct kthread_work *work);
-void kthread_delayed_work_timer_fn(struct timer_list *t);
-
-enum {
-	KTW_FREEZABLE		= 1 << 0,	/* freeze during suspend */
-};
-
-struct kthread_worker {
-	unsigned int		flags;
-	raw_spinlock_t		lock;
-	struct list_head	work_list;
-	struct list_head	delayed_work_list;
-	struct task_struct	*task;
-	struct kthread_work	*current_work;
-};
-
-struct kthread_work {
-	struct list_head	node;
-	kthread_work_func_t	func;
-	struct kthread_worker	*worker;
-	/* Number of canceling calls that are running at the moment. */
-	int			canceling;
-};
-
 struct kthread_delayed_work {
 	struct kthread_work work;
 	struct timer_list timer;
