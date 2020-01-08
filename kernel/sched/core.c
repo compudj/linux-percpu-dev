@@ -52,6 +52,8 @@ const_debug unsigned int sysctl_sched_features =
 #undef SCHED_FEAT
 #endif
 
+#define PIN_ON_CPU_CMD_BITMASK	(PIN_ON_CPU_CMD_SET | PIN_ON_CPU_CMD_CLEAR)
+
 /*
  * Number of tasks to iterate in a single balance run.
  * Limited because this is done with IRQs disabled.
@@ -1457,8 +1459,13 @@ static inline bool is_per_cpu_kthread(struct task_struct *p)
  */
 static inline bool is_cpu_allowed(struct task_struct *p, int cpu)
 {
-	if (!cpumask_test_cpu(cpu, p->cpus_ptr))
-		return false;
+	if (is_pinned_task(p)) {
+		if (!allowed_pinned_cpu(p, cpu))
+			return false;
+	} else {
+		if (!cpumask_test_cpu(cpu, p->cpus_ptr))
+			return false;
+	}
 
 	if (is_per_cpu_kthread(p))
 		return cpu_online(cpu);
@@ -1662,6 +1669,12 @@ static int __set_cpus_allowed_ptr(struct task_struct *p,
 		goto out;
 	}
 
+	/* Prevent removing the currently pinned CPU from the allowed cpu mask. */
+	if (is_pinned_task(p) && !cpumask_test_cpu(p->pinned_cpu, new_mask)) {
+		ret = -EINVAL;
+		goto out;
+	}
+
 	do_set_cpus_allowed(p, new_mask);
 
 	if (p->flags & PF_KTHREAD) {
@@ -1673,6 +1686,10 @@ static int __set_cpus_allowed_ptr(struct task_struct *p,
 			!cpumask_intersects(new_mask, cpu_active_mask) &&
 			p->nr_cpus_allowed != 1);
 	}
+
+	/* Task pinned to a CPU overrides allowed cpu mask. */
+	if (is_pinned_task(p))
+		goto out;
 
 	/* Can the task run on the task's current CPU? If so, we're done */
 	if (cpumask_test_cpu(task_cpu(p), new_mask))
@@ -1813,11 +1830,20 @@ static int migrate_swap_stop(void *data)
 	if (task_cpu(arg->src_task) != arg->src_cpu)
 		goto unlock;
 
-	if (!cpumask_test_cpu(arg->dst_cpu, arg->src_task->cpus_ptr))
-		goto unlock;
-
-	if (!cpumask_test_cpu(arg->src_cpu, arg->dst_task->cpus_ptr))
-		goto unlock;
+	if (is_pinned_task(arg->src_task)) {
+		if (!allowed_pinned_cpu(arg->src_task, arg->dst_cpu))
+			goto unlock;
+	} else {
+		if (!cpumask_test_cpu(arg->dst_cpu, arg->src_task->cpus_ptr))
+			goto unlock;
+	}
+	if (is_pinned_task(arg->dst_task)) {
+		if (!allowed_pinned_cpu(arg->dst_task, arg->src_cpu))
+			goto unlock;
+	} else {
+		if (!cpumask_test_cpu(arg->src_cpu, arg->dst_task->cpus_ptr))
+			goto unlock;
+	}
 
 	__migrate_swap_task(arg->src_task, arg->dst_cpu);
 	__migrate_swap_task(arg->dst_task, arg->src_cpu);
@@ -1858,11 +1884,21 @@ int migrate_swap(struct task_struct *cur, struct task_struct *p,
 	if (!cpu_active(arg.src_cpu) || !cpu_active(arg.dst_cpu))
 		goto out;
 
-	if (!cpumask_test_cpu(arg.dst_cpu, arg.src_task->cpus_ptr))
-		goto out;
+	if (is_pinned_task(arg.src_task)) {
+		if (!allowed_pinned_cpu(arg.src_task, arg.dst_cpu))
+			goto out;
+	} else {
+		if (!cpumask_test_cpu(arg.dst_cpu, arg.src_task->cpus_ptr))
+			goto out;
+	}
 
-	if (!cpumask_test_cpu(arg.src_cpu, arg.dst_task->cpus_ptr))
-		goto out;
+	if (is_pinned_task(arg.dst_task)) {
+		if (!allowed_pinned_cpu(arg.dst_task, arg.src_cpu))
+			goto out;
+	} else {
+		if (!cpumask_test_cpu(arg.src_cpu, arg.dst_task->cpus_ptr))
+			goto out;
+	}
 
 	trace_sched_swap_numa(cur, arg.src_cpu, p, arg.dst_cpu);
 	ret = stop_two_cpus(arg.dst_cpu, arg.src_cpu, migrate_swap_stop, &arg);
@@ -2035,6 +2071,18 @@ static int select_fallback_rq(int cpu, struct task_struct *p)
 	int dest_cpu;
 
 	/*
+	 * If the task is pinned to a CPU which is online, pick that pinned CPU
+	 * number.
+	 * If the task is pinned to a CPU which is offline, pick a CPU which is
+	 * guaranteed to be the same for all tasks pinned to that offlined CPU.
+	 */
+	if (is_pinned_task(p)) {
+		if (cpu_online(p->pinned_cpu))
+			return p->pinned_cpu;
+		else
+			return pinned_cpu_offline_offload(p);
+	}
+	/*
 	 * If the node that the CPU is on has been offlined, cpu_to_node()
 	 * will return -1. There is no CPU on the node, and we should
 	 * select the CPU on the other node.
@@ -2104,10 +2152,15 @@ int select_task_rq(struct task_struct *p, int cpu, int sd_flags, int wake_flags)
 {
 	lockdep_assert_held(&p->pi_lock);
 
-	if (p->nr_cpus_allowed > 1)
-		cpu = p->sched_class->select_task_rq(p, cpu, sd_flags, wake_flags);
-	else
-		cpu = cpumask_any(p->cpus_ptr);
+	if (is_pinned_task(p))
+		cpu = p->pinned_cpu;
+	else {
+		if (p->nr_cpus_allowed > 1)
+			cpu = p->sched_class->select_task_rq(p, cpu, sd_flags,
+							     wake_flags);
+		else
+			cpu = cpumask_any(p->cpus_ptr);
+	}
 
 	/*
 	 * In order not to call set_task_cpu() on a blocking task we need
@@ -6130,8 +6183,13 @@ int migrate_task_to(struct task_struct *p, int target_cpu)
 	if (curr_cpu == target_cpu)
 		return 0;
 
-	if (!cpumask_test_cpu(target_cpu, p->cpus_ptr))
-		return -EINVAL;
+	if (is_pinned_task(p)) {
+		if (!allowed_pinned_cpu(p, target_cpu))
+			return -EINVAL;
+	} else {
+		if (!cpumask_test_cpu(target_cpu, p->cpus_ptr))
+			return -EINVAL;
+	}
 
 	/* TODO: This is not properly updating schedstats */
 
@@ -6300,6 +6358,7 @@ static void migrate_tasks(struct rq *dead_rq, struct rq_flags *rf)
 
 	rq->stop = stop;
 }
+
 #endif /* CONFIG_HOTPLUG_CPU */
 
 void set_rq_online(struct rq *rq)
@@ -6380,10 +6439,99 @@ static int cpuset_cpu_inactive(unsigned int cpu)
 	return 0;
 }
 
+static bool skip_pinned_task(int pinned_cpu, int cpu,
+			     bool first_online)
+{
+	if (pinned_cpu < 0)
+		return true;
+	if (first_online) {
+		if (cpu_online(pinned_cpu) && pinned_cpu != cpu)
+			return true;
+	} else {
+		if (pinned_cpu != cpu)
+			return true;
+	}
+	return false;
+}
+
+static void sched_cpu_migrate_pinned_tasks(unsigned int cpu)
+{
+	struct rq *rq = cpu_rq(cpu);
+	struct task_struct *p, *t;
+	bool first_online = false;
+
+	if (cpu == cpumask_first(cpu_online_mask))
+		first_online = true;
+
+	/*
+	 * This state transition (online && !active) when going online
+	 * only allow bound kthreads to be scheduled.
+	 * At this point, the CPU is completely online and running,
+	 * but no userspace tasks are scheduled yet.
+	 */
+	read_lock(&tasklist_lock);
+	for_each_process_thread(p, t) {
+		struct rq *target_rq;
+		struct rq_flags rf;
+		int pinned_cpu;
+
+		/*
+		 * Migrate t to cpu if pinned to this cpu.
+		 *
+		 * Migrate t to cpu if its pinned cpu is offline
+		 * and cpu becomes the new first online cpu.
+		 *
+		 * Transition of t->pinned_cpu to cpu can only
+		 * happen if the thread is scheduled on cpu, which
+		 * is impossible at this point because the cpu is
+		 * not active.
+		 *
+		 * Transition of t->pinned_cpu from cpu to -1 or some
+		 * other cpu number may happen concurrently. Therefore,
+		 * skip early (without rq lock), and check again with
+		 * the rq lock held to eliminate concurrent transitions
+		 * from cpu to -1 or some other cpu number.
+		 */
+		pinned_cpu = READ_ONCE(t->pinned_cpu);
+		if (skip_pinned_task(pinned_cpu, cpu, first_online))
+			continue;
+		if (pinned_cpu == cpu)
+			printk("pin_on_cpu migrate to owner: online cpu %d\n",
+			       cpu);
+		if (first_online && !cpu_online(pinned_cpu))
+			printk("pin_on_cpu migrate to new offload cpu %d\n",
+			       cpu);
+		target_rq = task_rq_lock(t, &rf);
+		pinned_cpu = t->pinned_cpu;
+		if (skip_pinned_task(pinned_cpu, cpu, first_online))
+			goto unlock;
+		WARN_ON_ONCE(target_rq == rq);
+		update_rq_clock(target_rq);
+		if (task_running(target_rq, t) || t->state == TASK_WAKING) {
+			struct migration_arg arg = { t, cpu };
+			/* Need help from migration thread: drop lock and wait. */
+			task_rq_unlock(target_rq, t, &rf);
+			stop_one_cpu(cpu_of(target_rq), migration_cpu_stop, &arg);
+			continue;
+		} else if (task_on_rq_queued(t)) {
+			/*
+			 * OK, since we're going to drop the lock immediately
+			 * afterwards anyway.
+			 */
+			rq = move_queued_task(target_rq, &rf, t, cpu);
+		}
+	unlock:
+		task_rq_unlock(target_rq, t, &rf);
+	}
+	read_unlock(&tasklist_lock);
+}
+
 int sched_cpu_activate(unsigned int cpu)
 {
 	struct rq *rq = cpu_rq(cpu);
 	struct rq_flags rf;
+
+	sched_cpu_migrate_pinned_tasks(cpu);
 
 #ifdef CONFIG_SCHED_SMT
 	/*
@@ -7898,6 +8046,150 @@ struct cgroup_subsys cpu_cgrp_subsys = {
 };
 
 #endif	/* CONFIG_CGROUP_SCHED */
+
+#ifdef CONFIG_SMP
+static void do_set_pinned_cpu(struct task_struct *p, int cpu)
+{
+	struct rq *rq = task_rq(p);
+	bool queued, running;
+
+	lockdep_assert_held(&p->pi_lock);
+
+	queued = task_on_rq_queued(p);
+	running = task_current(rq, p);
+
+	if (queued) {
+		/*
+		 * Because __kthread_bind() calls this on blocked tasks without
+		 * holding rq->lock.
+		 */
+		lockdep_assert_held(&rq->lock);
+		dequeue_task(rq, p, DEQUEUE_SAVE | DEQUEUE_NOCLOCK);
+	}
+	if (running)
+		put_prev_task(rq, p);
+
+	WRITE_ONCE(p->pinned_cpu, cpu);
+
+	if (queued)
+		enqueue_task(rq, p, ENQUEUE_RESTORE | ENQUEUE_NOCLOCK);
+	if (running)
+		set_next_task(rq, p);
+}
+#endif
+
+static int __do_pin_on_cpu(int cpu)
+{
+	struct task_struct *p = current;
+	struct rq_flags rf;
+	struct rq *rq;
+	int ret = 0;
+#ifdef CONFIG_SMP
+	int dest_cpu;
+	struct migration_arg arg = { p };
+#endif
+
+	cpus_read_lock();
+	rq = task_rq_lock(p, &rf);
+	update_rq_clock(rq);
+	if (cpu >= 0 && !cpumask_test_cpu(cpu, current->cpus_ptr)) {
+		ret = -EINVAL;
+		goto out;
+	}
+#ifdef CONFIG_SMP
+	do_set_pinned_cpu(p, cpu);
+	if (cpu >= 0) {
+		if (cpu_online(cpu))
+			dest_cpu = cpu;
+		else
+			dest_cpu = pinned_cpu_offline_offload(p);
+		if (task_cpu(p) == dest_cpu) {
+			/*
+			 * If the task already runs on the pinned cpu, we're
+			 * done.
+			 */
+			goto out;
+		}
+	} else {
+		/*
+		 * When clearing the pinned cpu, we may need to migrate the
+		 * current task if it is currently sitting on a runqueue which
+		 * does not belong to the allowed mask.
+		 */
+		dest_cpu = cpumask_any(p->cpus_ptr);
+	}
+	arg.dest_cpu = dest_cpu;
+	/* Need help from migration thread: drop lock and wait. */
+	task_rq_unlock(rq, p, &rf);
+	stop_one_cpu(cpu_of(rq), migration_cpu_stop, &arg);
+
+	/* Preempt disable prevents hotplug on current cpu. */
+	preempt_disable();
+	WARN_ON_ONCE(cpu >= 0 && cpu_online(cpu) &&
+		     smp_processor_id() != cpu);
+	preempt_enable();
+	cpus_read_unlock();
+	return 0;
+#endif
+out:
+	task_rq_unlock(rq, p, &rf);
+	cpus_read_unlock();
+	return ret;
+}
+
+static int pin_on_cpu_set(int cpu)
+{
+	if (cpu < 0 || !cpu_possible(cpu)) {
+		return -EINVAL;
+	}
+	return __do_pin_on_cpu(cpu);
+}
+
+static int pin_on_cpu_clear(void)
+{
+	return __do_pin_on_cpu(-1);
+}
+
+/*
+ * sys_pin_on_cpu - pin current task to a specific cpu.
+ * @cmd: command to issue (enum pin_on_cpu_cmd)
+ * @flags: system call flags
+ * @cpu: cpu where the task should run.
+ *
+ * Returns -EINVAL if cmd is unknown.
+ * Returns -EINVAL if flags are unknown.
+ * Returns -EINVAL if the CPU is not part of the possible CPUs.
+ * Returns -EINVAL if the CPU is not part of the allowed cpu mask
+ * for the current task.
+ *
+ * PIN_ON_CPU_CMD_QUERY: Return the mask of supported commands.
+ * PIN_ON_CPU_CMD_SET: Pin the current task to a specific CPU.
+ * PIN_ON_CPU_CMD_CLEAR: Clear cpu pinning for current task.
+ *
+ * If the pinned CPU is online, the current task will run on that CPU.
+ *
+ * If the pinned CPU is offline, the scheduler guarantees that
+ * all tasks pinned to that CPU number are moved to the same
+ * runqueue.
+ *
+ * Removing the pinned CPU from the task's allowed cpu mask is
+ * forbidden.
+ */
+SYSCALL_DEFINE3(pin_on_cpu, int, cmd, int, flags, int, cpu)
+{
+	if (unlikely(flags))
+		return -EINVAL;
+	switch (cmd) {
+	case PIN_ON_CPU_CMD_QUERY:
+		return PIN_ON_CPU_CMD_BITMASK;
+	case PIN_ON_CPU_CMD_SET:
+		return pin_on_cpu_set(cpu);
+	case PIN_ON_CPU_CMD_CLEAR:
+		return pin_on_cpu_clear();
+	default:
+		return -EINVAL;
+	}
+}
 
 void dump_cpu_task(int cpu)
 {

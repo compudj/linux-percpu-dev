@@ -187,6 +187,40 @@ static inline int task_has_dl_policy(struct task_struct *p)
 	return dl_policy(p->policy);
 }
 
+/*
+ * All tasks which require to be pinned on offlined CPUs are sent
+ * to runqueue of the first online CPU.
+ */
+static inline bool is_pinned_task(struct task_struct *p)
+{
+#ifdef CONFIG_SMP
+	return p->pinned_cpu >= 0;
+#else
+	return false;
+#endif
+}
+
+static inline int pinned_cpu_offline_offload(struct task_struct *p)
+{
+	return cpumask_first(cpu_online_mask);
+}
+
+static inline bool allowed_pinned_cpu(struct task_struct *p, int cpu)
+{
+#ifdef CONFIG_SMP
+	if (!cpu_possible(cpu))
+		return false;
+	if (cpu_online(p->pinned_cpu)) {
+		if (p->pinned_cpu == cpu)
+			return true;
+	} else {
+		if (cpu == pinned_cpu_offline_offload(p))
+			return true;
+	}
+#endif
+	return false;
+}
+
 #define cap_scale(v, s) ((v)*(s) >> SCHED_CAPACITY_SHIFT)
 
 /*

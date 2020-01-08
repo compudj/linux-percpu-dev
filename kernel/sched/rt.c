@@ -1600,9 +1600,15 @@ static void put_prev_task_rt(struct rq *rq, struct task_struct *p)
 
 static int pick_rt_task(struct rq *rq, struct task_struct *p, int cpu)
 {
-	if (!task_running(rq, p) &&
-	    cpumask_test_cpu(cpu, p->cpus_ptr))
-		return 1;
+	if (!task_running(rq, p)) {
+		if (is_pinned_task(p)) {
+			if (allowed_pinned_cpu(p, cpu))
+				return 1;
+		} else {
+			if (cpumask_test_cpu(cpu, p->cpus_ptr))
+				return 1;
+		}
+	}
 
 	return 0;
 }
@@ -1738,7 +1744,8 @@ static struct rq *find_lock_lowest_rq(struct task_struct *task, struct rq *rq)
 			 * Also make sure that it wasn't scheduled on its rq.
 			 */
 			if (unlikely(task_rq(task) != rq ||
-				     !cpumask_test_cpu(lowest_rq->cpu, task->cpus_ptr) ||
+				     (is_pinned_task(task) && !allowed_pinned_cpu(task, lowest_rq->cpu)) ||
+				     (!is_pinned_task(task) && !cpumask_test_cpu(lowest_rq->cpu, task->cpus_ptr)) ||
 				     task_running(rq, task) ||
 				     !rt_task(task) ||
 				     !task_on_rq_queued(task))) {

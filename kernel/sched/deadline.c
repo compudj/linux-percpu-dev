@@ -535,24 +535,31 @@ static struct rq *dl_task_offline_migration(struct rq *rq, struct task_struct *p
 	if (!later_rq) {
 		int cpu;
 
-		/*
-		 * If we cannot preempt any rq, fall back to pick any
-		 * online CPU:
-		 */
-		cpu = cpumask_any_and(cpu_active_mask, p->cpus_ptr);
-		if (cpu >= nr_cpu_ids) {
+		if (is_pinned_task(p)) {
+			if (cpu_online(p->pinned_cpu))
+				cpu = p->pinned_cpu;
+			else
+				cpu = pinned_cpu_offline_offload(p);
+		} else {
 			/*
-			 * Failed to find any suitable CPU.
-			 * The task will never come back!
+			 * If we cannot preempt any rq, fall back to pick any
+			 * online CPU:
 			 */
-			BUG_ON(dl_bandwidth_enabled());
+			cpu = cpumask_any_and(cpu_active_mask, p->cpus_ptr);
+			if (cpu >= nr_cpu_ids) {
+				/*
+				 * Failed to find any suitable CPU.
+				 * The task will never come back!
+				 */
+				BUG_ON(dl_bandwidth_enabled());
 
-			/*
-			 * If admission control is disabled we
-			 * try a little harder to let the task
-			 * run.
-			 */
-			cpu = cpumask_any(cpu_active_mask);
+				/*
+				 * If admission control is disabled we
+				 * try a little harder to let the task
+				 * run.
+				 */
+				cpu = cpumask_any(cpu_active_mask);
+			}
 		}
 		later_rq = cpu_rq(cpu);
 		double_lock_balance(rq, later_rq);
@@ -1836,9 +1843,15 @@ static void task_fork_dl(struct task_struct *p)
 
 static int pick_dl_task(struct rq *rq, struct task_struct *p, int cpu)
 {
-	if (!task_running(rq, p) &&
-	    cpumask_test_cpu(cpu, p->cpus_ptr))
-		return 1;
+	if (!task_running(rq, p)) {
+		if (is_pinned_task(p)) {
+			if (allowed_pinned_cpu(p, cpu))
+				return 1;
+		} else {
+			if (cpumask_test_cpu(cpu, p->cpus_ptr))
+				return 1;
+		}
+	}
 	return 0;
 }
 
@@ -1987,7 +2000,8 @@ static struct rq *find_lock_later_rq(struct task_struct *task, struct rq *rq)
 		/* Retry if something changed. */
 		if (double_lock_balance(rq, later_rq)) {
 			if (unlikely(task_rq(task) != rq ||
-				     !cpumask_test_cpu(later_rq->cpu, task->cpus_ptr) ||
+				     (is_pinned_task(task) && !allowed_pinned_cpu(task, later_rq->cpu)) ||
+				     (!is_pinned_task(task) && !cpumask_test_cpu(later_rq->cpu, task->cpus_ptr)) ||
 				     task_running(rq, task) ||
 				     !dl_task(task) ||
 				     !task_on_rq_queued(task))) {

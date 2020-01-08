@@ -7223,6 +7223,25 @@ int can_migrate_task(struct task_struct *p, struct lb_env *env)
 
 	lockdep_assert_held(&env->src_rq->lock);
 
+	if (is_pinned_task(p)) {
+		if (task_running(env->src_rq, p)) {
+			schedstat_inc(p->se.statistics.nr_failed_migrations_running);
+			return 0;
+		}
+		if (cpu_online(p->pinned_cpu)) {
+			if (env->dst_cpu == p->pinned_cpu)
+				return 1;
+			else
+				return 0;
+		} else {
+			if (env->dst_cpu ==
+			    pinned_cpu_offline_offload(p))
+				return 1;
+			else
+				return 0;
+		}
+	}
+
 	/*
 	 * We do not migrate tasks that are:
 	 * 1) throttled_lb_pair, or

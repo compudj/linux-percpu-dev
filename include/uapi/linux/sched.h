@@ -114,4 +114,10 @@ struct clone_args {
 			 SCHED_FLAG_KEEP_ALL		| \
 			 SCHED_FLAG_UTIL_CLAMP)
 
+enum pin_on_cpu_cmd {
+	PIN_ON_CPU_CMD_QUERY				= 0,
+	PIN_ON_CPU_CMD_SET				= (1 << 0),
+	PIN_ON_CPU_CMD_CLEAR				= (1 << 1),
+};
+
 #endif /* _UAPI_LINUX_SCHED_H */
