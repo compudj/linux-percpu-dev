@@ -29,11 +29,18 @@ static inline int sys_pin_on_cpu(int cmd, int flags, int cpu)
 
 static inline void pin_on_cpu_set(int cpu)
 {
-	int ret;
+	int ret, this_cpu, this_getcpu;
 
 	ret = sys_pin_on_cpu(PIN_ON_CPU_CMD_SET, 0, cpu);
 	if (ret)
 		abort();
+	this_cpu = percpu_current_cpu();
+	this_getcpu = sched_getcpu();
+	if (this_cpu != cpu || this_getcpu != cpu) {
+		fprintf(stderr, "Wrong CPU: pinned %d rseq %d get %d\n",
+				cpu, this_cpu, this_getcpu);
+		abort();
+	}
 }
 
 static inline void pin_on_cpu_clear(void)
