@@ -648,10 +648,15 @@ void test_percpu_list(void)
 	struct percpu_list list;
 	pthread_t test_threads[num_threads];
 	cpu_set_t allowed_cpus;
+	long nr_proc_conf;
 
 	memset(&list, 0, sizeof(list));
 
-	/* Generate list entries for every usable cpu. */
+	nr_proc_conf = sysconf(_SC_NPROCESSORS_CONF);
+	if (nr_proc_conf < 0)
+		abort();
+
+	/* Generate list entries for every allowed cpu. */
 	sched_getaffinity(0, sizeof(allowed_cpus), &allowed_cpus);
 	for (i = 0; i < CPU_SETSIZE; i++) {
 		if (!CPU_ISSET(i, &allowed_cpus))
@@ -688,11 +693,8 @@ void test_percpu_list(void)
 		}
 	}
 
-	for (i = 0; i < CPU_SETSIZE; i++) {
+	for (i = 0; i < nr_proc_conf; i++) {
 		struct percpu_list_node *node;
-
-		if (!CPU_ISSET(i, &allowed_cpus))
-			continue;
 
 		while ((node = percpu_list_pop(&list, i))) {
 			sum += node->data;
@@ -816,20 +818,29 @@ void test_percpu_buffer(void)
 	struct percpu_buffer buffer;
 	pthread_t test_threads[num_threads];
 	cpu_set_t allowed_cpus;
+	long nr_proc_conf;
 
 	memset(&buffer, 0, sizeof(buffer));
 
-	/* Generate list entries for every usable cpu. */
-	sched_getaffinity(0, sizeof(allowed_cpus), &allowed_cpus);
-	for (i = 0; i < CPU_SETSIZE; i++) {
-		if (!CPU_ISSET(i, &allowed_cpus))
-			continue;
+	nr_proc_conf = sysconf(_SC_NPROCESSORS_CONF);
+	if (nr_proc_conf < 0)
+		abort();
+
+	/* Generate buffers for every configured cpu. */
+	for (i = 0; i < nr_proc_conf; i++) {
 		/* Worse-case is every item in same CPU. */
 		buffer.c[i].array =
 			malloc(sizeof(*buffer.c[i].array) * CPU_SETSIZE *
 			       BUFFER_ITEM_PER_CPU);
 		assert(buffer.c[i].array);
 		buffer.c[i].buflen = CPU_SETSIZE * BUFFER_ITEM_PER_CPU;
+	}
+
+	sched_getaffinity(0, sizeof(allowed_cpus), &allowed_cpus);
+	/* Generate buffer entries for every allowed cpu. */
+	for (i = 0; i < CPU_SETSIZE; i++) {
+		if (!CPU_ISSET(i, &allowed_cpus))
+			continue;
 		for (j = 1; j <= BUFFER_ITEM_PER_CPU; j++) {
 			struct percpu_buffer_node *node;
 
@@ -869,11 +880,8 @@ void test_percpu_buffer(void)
 		}
 	}
 
-	for (i = 0; i < CPU_SETSIZE; i++) {
+	for (i = 0; i < nr_proc_conf; i++) {
 		struct percpu_buffer_node *node;
-
-		if (!CPU_ISSET(i, &allowed_cpus))
-			continue;
 
 		while ((node = percpu_buffer_pop(&buffer, i))) {
 			sum += node->data;
@@ -1005,20 +1013,29 @@ void test_percpu_memcpy_buffer(void)
 	struct percpu_memcpy_buffer buffer;
 	pthread_t test_threads[num_threads];
 	cpu_set_t allowed_cpus;
+	long nr_proc_conf;
 
 	memset(&buffer, 0, sizeof(buffer));
 
-	/* Generate list entries for every usable cpu. */
-	sched_getaffinity(0, sizeof(allowed_cpus), &allowed_cpus);
-	for (i = 0; i < CPU_SETSIZE; i++) {
-		if (!CPU_ISSET(i, &allowed_cpus))
-			continue;
+	nr_proc_conf = sysconf(_SC_NPROCESSORS_CONF);
+	if (nr_proc_conf < 0)
+		abort();
+
+	/* Generate buffers for every configured cpu. */
+	for (i = 0; i < nr_proc_conf; i++) {
 		/* Worse-case is every item in same CPU. */
 		buffer.c[i].array =
 			malloc(sizeof(*buffer.c[i].array) * CPU_SETSIZE *
 			       MEMCPY_BUFFER_ITEM_PER_CPU);
 		assert(buffer.c[i].array);
 		buffer.c[i].buflen = CPU_SETSIZE * MEMCPY_BUFFER_ITEM_PER_CPU;
+	}
+
+	/* Generate buffer entries for every allowed cpu. */
+	sched_getaffinity(0, sizeof(allowed_cpus), &allowed_cpus);
+	for (i = 0; i < CPU_SETSIZE; i++) {
+		if (!CPU_ISSET(i, &allowed_cpus))
+			continue;
 		for (j = 1; j <= MEMCPY_BUFFER_ITEM_PER_CPU; j++) {
 			expected_sum += 2 * j + 1;
 
@@ -1055,11 +1072,8 @@ void test_percpu_memcpy_buffer(void)
 		}
 	}
 
-	for (i = 0; i < CPU_SETSIZE; i++) {
+	for (i = 0; i < nr_proc_conf; i++) {
 		struct percpu_memcpy_buffer_node item;
-
-		if (!CPU_ISSET(i, &allowed_cpus))
-			continue;
 
 		while (percpu_memcpy_buffer_pop(&buffer, &item, i)) {
 			sum += item.data1;

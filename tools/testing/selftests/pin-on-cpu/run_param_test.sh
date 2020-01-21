@@ -123,12 +123,3 @@ inject_blocking -m 2 -s 1
 
 echo "Sleep injection (1ms, 100%)"
 inject_blocking -m 1 -s 1
-
-echo "Disable rseq for 25% threads"
-do_tests -D 4
-
-echo "Disable rseq for 50% threads"
-do_tests -D 2
-
-echo "Disable rseq"
-do_tests -d
