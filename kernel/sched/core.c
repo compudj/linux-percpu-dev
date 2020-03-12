@@ -1669,12 +1669,6 @@ static int __set_cpus_allowed_ptr(struct task_struct *p,
 		goto out;
 	}
 
-	/* Prevent removing the currently pinned CPU from the allowed cpu mask. */
-	if (is_pinned_task(p) && !cpumask_test_cpu(p->pinned_cpu, new_mask)) {
-		ret = -EINVAL;
-		goto out;
-	}
-
 	do_set_cpus_allowed(p, new_mask);
 
 	if (p->flags & PF_KTHREAD) {
@@ -1688,8 +1682,13 @@ static int __set_cpus_allowed_ptr(struct task_struct *p,
 	}
 
 	/* Task pinned to a CPU overrides allowed cpu mask. */
-	if (is_pinned_task(p))
+	if (is_pinned_task(p)) {
+		if (!cpumask_test_cpu(p->pinned_cpu, new_mask))
+			p->pinned_cpu_disallowed = true;
+		else
+			p->pinned_cpu_disallowed = false;
 		goto out;
+	}
 
 	/* Can the task run on the task's current CPU? If so, we're done */
 	if (cpumask_test_cpu(task_cpu(p), new_mask))
@@ -8069,6 +8068,11 @@ static void do_set_pinned_cpu(struct task_struct *p, int cpu)
 	if (running)
 		put_prev_task(rq, p);
 
+	if (cpu >= 0 && !cpumask_test_cpu(cpu, current->cpus_ptr))
+		p->pinned_cpu_disallowed = true;
+	else
+		p->pinned_cpu_disallowed = false;
+
 	WRITE_ONCE(p->pinned_cpu, cpu);
 
 	if (queued)
@@ -8092,10 +8096,6 @@ static int __do_pin_on_cpu(int cpu)
 	cpus_read_lock();
 	rq = task_rq_lock(p, &rf);
 	update_rq_clock(rq);
-	if (cpu >= 0 && !cpumask_test_cpu(cpu, current->cpus_ptr)) {
-		ret = -EINVAL;
-		goto out;
-	}
 #ifdef CONFIG_SMP
 	do_set_pinned_cpu(p, cpu);
 	if (cpu >= 0) {

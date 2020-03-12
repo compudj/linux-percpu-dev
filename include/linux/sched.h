@@ -652,6 +652,7 @@ struct task_struct {
 	unsigned int			cpu;
 #endif
 	int				pinned_cpu;
+	int				pinned_cpu_disallowed;
 	unsigned int			wakee_flips;
 	unsigned long			wakee_flip_decay_ts;
 	struct task_struct		*last_wakee;
