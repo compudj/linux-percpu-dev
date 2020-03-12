@@ -1373,6 +1373,9 @@ static inline int normal_prio(struct task_struct *p)
  */
 static int effective_prio(struct task_struct *p)
 {
+	if (p->pinned_cpu_disallowed)
+		return MAX_PRIO-1;
+
 	p->normal_prio = normal_prio(p);
 	/*
 	 * If we are RT tasks or we were boosted to RT priority,
@@ -1592,12 +1595,38 @@ void set_cpus_allowed_common(struct task_struct *p, const struct cpumask *new_ma
 {
 	cpumask_copy(&p->cpus_mask, new_mask);
 	p->nr_cpus_allowed = cpumask_weight(new_mask);
+
+	/* Task pinned to a CPU overrides allowed cpu mask. */
+	if (is_pinned_task(p)) {
+		if (!cpumask_test_cpu(p->pinned_cpu, new_mask)) {
+			p->prio = MAX_PRIO-1;
+			p->sched_class = &fair_sched_class;
+			p->pinned_cpu_disallowed = true;
+		} else {
+			if (p->pinned_cpu_disallowed) {
+				/*
+				 * Note: this discards priority inheritance.
+				 */
+				p->prio = normal_prio(p);
+				p->pinned_cpu_disallowed = false;
+				if (dl_prio(p->prio)) {
+					p->sched_class = &dl_sched_class;
+				} else if (rt_prio(p->prio)) {
+					p->sched_class = &rt_sched_class;
+				} else {
+					p->sched_class = &fair_sched_class;
+				}
+			}
+		}
+	}
 }
 
 void do_set_cpus_allowed(struct task_struct *p, const struct cpumask *new_mask)
 {
 	struct rq *rq = task_rq(p);
 	bool queued, running;
+	int oldprio;
+	const struct sched_class *prev_class;
 
 	lockdep_assert_held(&p->pi_lock);
 
@@ -1615,12 +1644,17 @@ void do_set_cpus_allowed(struct task_struct *p, const struct cpumask *new_mask)
 	if (running)
 		put_prev_task(rq, p);
 
+	oldprio = p->prio;
+	prev_class = p->sched_class;
+
 	p->sched_class->set_cpus_allowed(p, new_mask);
 
 	if (queued)
 		enqueue_task(rq, p, ENQUEUE_RESTORE | ENQUEUE_NOCLOCK);
 	if (running)
 		set_next_task(rq, p);
+
+	check_class_changed(rq, p, prev_class, oldprio);
 }
 
 /*
@@ -1682,13 +1716,8 @@ static int __set_cpus_allowed_ptr(struct task_struct *p,
 	}
 
 	/* Task pinned to a CPU overrides allowed cpu mask. */
-	if (is_pinned_task(p)) {
-		if (!cpumask_test_cpu(p->pinned_cpu, new_mask))
-			p->pinned_cpu_disallowed = true;
-		else
-			p->pinned_cpu_disallowed = false;
+	if (is_pinned_task(p))
 		goto out;
-	}
 
 	/* Can the task run on the task's current CPU? If so, we're done */
 	if (cpumask_test_cpu(task_cpu(p), new_mask))
@@ -4427,6 +4456,9 @@ void rt_mutex_setprio(struct task_struct *p, struct task_struct *pi_task)
 	const struct sched_class *prev_class;
 	struct rq_flags rf;
 	struct rq *rq;
+
+	if (p->pinned_cpu_disallowed)
+		return;
 
 	/* XXX used to be waiter->prio, not waiter->task->prio */
 	prio = __rt_effective_prio(pi_task, p->normal_prio);
@@ -8051,6 +8083,8 @@ static void do_set_pinned_cpu(struct task_struct *p, int cpu)
 {
 	struct rq *rq = task_rq(p);
 	bool queued, running;
+	int oldprio;
+	const struct sched_class *prev_class;
 
 	lockdep_assert_held(&p->pi_lock);
 
@@ -8068,10 +8102,29 @@ static void do_set_pinned_cpu(struct task_struct *p, int cpu)
 	if (running)
 		put_prev_task(rq, p);
 
-	if (cpu >= 0 && !cpumask_test_cpu(cpu, current->cpus_ptr))
+	oldprio = p->prio;
+	prev_class = p->sched_class;
+
+	if (cpu >= 0 && !cpumask_test_cpu(cpu, current->cpus_ptr)) {
+		p->prio = MAX_PRIO-1;
+		p->sched_class = &fair_sched_class;
 		p->pinned_cpu_disallowed = true;
-	else
-		p->pinned_cpu_disallowed = false;
+	} else {
+		if (p->pinned_cpu_disallowed) {
+			/*
+			 * Note: this discards priority inheritance.
+			 */
+			p->prio = normal_prio(p);
+			p->pinned_cpu_disallowed = false;
+			if (dl_prio(p->prio)) {
+				p->sched_class = &dl_sched_class;
+			} else if (rt_prio(p->prio)) {
+				p->sched_class = &rt_sched_class;
+			} else {
+				p->sched_class = &fair_sched_class;
+			}
+		}
+	}
 
 	WRITE_ONCE(p->pinned_cpu, cpu);
 
@@ -8079,6 +8132,8 @@ static void do_set_pinned_cpu(struct task_struct *p, int cpu)
 		enqueue_task(rq, p, ENQUEUE_RESTORE | ENQUEUE_NOCLOCK);
 	if (running)
 		set_next_task(rq, p);
+
+	check_class_changed(rq, p, prev_class, oldprio);
 }
 #endif
 
