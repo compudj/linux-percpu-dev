@@ -1710,8 +1710,8 @@ static void cpu_mutex_preempt_ipi(void *data)
 
 static void cpu_mutex_work_func(struct kthread_work *work)
 {
-	struct task_struct *task = get_task_struct(container_of(work, struct task_struct,
-						cpu_mutex_work));
+	struct task_struct *task = container_of(work, struct task_struct,
+						cpu_mutex_work);
 	struct cpu_mutex *cpum = per_cpu_ptr(&cpu_mutex, smp_processor_id());
 
 	/* Set worker active for task. */
@@ -1766,12 +1766,14 @@ static void cpu_mutex_work_func(struct kthread_work *work)
 	WRITE_ONCE(task->cpu_mutex_worker_active, 0);
 
 	/* Requeue if still needed. */
-	if (READ_ONCE(task->cpu_mutex_need_worker)) {
+	if (READ_ONCE(task->cpu_mutex_need_worker) && task->state != TASK_DEAD) {
+		printk("cpu_mutex_work_func requeue from cpu %d task %p state 0x%lx\n", smp_processor_id(), task, task->state);
+		       
 		kthread_init_work(&task->cpu_mutex_work, cpu_mutex_work_func);
 		kthread_queue_work(cpum->worker, &task->cpu_mutex_work);
+	} else {
+		put_task_struct(task);
 	}
-
-	put_task_struct(task);
 }
 
 void __cpu_mutex_handle_notify_resume(struct ksignal *sig, struct pt_regs *regs)
@@ -1805,20 +1807,21 @@ void __cpu_mutex_handle_notify_resume(struct ksignal *sig, struct pt_regs *regs)
 
 	preempt_disable();
 	set_current_state(TASK_INTERRUPTIBLE);
-	printk("cpu mutex notify resume block for cpu %d from task %p\n", task_cpu_mutex,
-	       current);
+	printk("cpu mutex notify resume block for cpu %d from task %p state 0x%lx\n", task_cpu_mutex,
+	       current, current->state);
 	if (!READ_ONCE(current->cpu_mutex_need_worker)) {
 		struct cpu_mutex *cpum = per_cpu_ptr(&cpu_mutex, task_cpu_mutex);
 
 		WARN_ON_ONCE(current->cpu_mutex_worker_active);
 		WRITE_ONCE(current->cpu_mutex_need_worker, 1);
+		get_task_struct(current);
 		kthread_init_work(&current->cpu_mutex_work, cpu_mutex_work_func);
 		kthread_queue_work(cpum->worker, &current->cpu_mutex_work);
 	}
 	preempt_enable();
 	schedule();
-	printk("cpu mutex notify resume unblock for cpu %d from task %p\n", task_cpu_mutex,
-	       current);
+	printk("cpu mutex notify resume unblock for cpu %d from task %p state 0x%lx\n", task_cpu_mutex,
+	       current, current->state);
 }
 
 void set_task_cpu(struct task_struct *p, unsigned int new_cpu)
