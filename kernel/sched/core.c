@@ -41,9 +41,7 @@ DEFINE_PER_CPU_SHARED_ALIGNED(struct rq, runqueues);
 
 struct cpu_mutex {
 	struct kthread_worker *worker;
-	//struct kthread_delayed_work dwork;
 	int cpu;				/* protected cpu */
-	struct task_struct *running_task;	/* associated task running. */
 };
 
 DEFINE_PER_CPU(struct cpu_mutex, cpu_mutex);
@@ -1710,8 +1708,8 @@ static void cpu_mutex_work_func(struct kthread_work *work)
 	struct task_struct *task = container_of(work, struct task_struct,
 						cpu_mutex_work);
 
-	/* Set running_task. */
-	WRITE_ONCE(cpum->running_task, task);
+	/* Set worker active for task. */
+	WRITE_ONCE(task->cpu_mutex_worker_active, 1);
 
 	/*
 	 * Order prior userspace memory accesses of local CPU with following
@@ -1728,27 +1726,36 @@ static void cpu_mutex_work_func(struct kthread_work *work)
 	/*
 	 * Consume CPU time as long as an associated task is running on another CPU.
 	 */
-	while (READ_ONCE(cpum->running_task) && task->cpu != smp_processor_id()) {
+	while (READ_ONCE(task->cpu_mutex_need_worker)) {
 		cond_resched();
 		cpu_relax();
 	}
-	WRITE_ONCE(cpum->running_task, NULL);
+	/*
+	 * Order prior userspace memory accesses of remote CPU with following
+	 * local userspace memory accesses.
+	 */
+	smp_mb();
+	WRITE_ONCE(task->cpu_mutex_worker_active, 0);
 }
 
 void __cpu_mutex_handle_notify_resume(struct ksignal *sig, struct pt_regs *regs)
 {
 	int task_cpu_mutex = READ_ONCE(current->cpu_mutex);
 	struct cpu_mutex *cpum;
+	int ret;
 
 	WARN_ON_ONCE(task_cpu_mutex < 0);
 	preempt_disable();
-	if (task_cpu_mutex == smp_processor_id()) {
+	cpum = per_cpu_ptr(&task_cpu_mutex, task_cpu_mutex);
+	if (READ_ONCE(current->cpu_mutex_need_worker)
+	    && task_cpu_mutex == smp_processor_id()) {
+		WRITE_ONCE(current->cpu_mutex_need_worker, 0);
+		kthread_cancel_work_sync(&current->cpu_mutex_work);
 		preempt_enable();
 		return;
 	}
 
-	cpum = per_cpu_ptr(&cpu_mutex, task_cpu_mutex);
-	if (READ_ONCE(cpum->running_task) == current) {
+	if (READ_ONCE(current->cpu_mutex_worker_active)) {
 		preempt_enable();
 		return;
 	}
@@ -1756,8 +1763,12 @@ void __cpu_mutex_handle_notify_resume(struct ksignal *sig, struct pt_regs *regs)
 	set_current_state(TASK_INTERRUPTIBLE);
 	//printk("cpu mutex notify resume for cpu %d from task %p\n", task_cpu_mutex,
 	//       current);
-	kthread_init_work(&current->cpu_mutex_work, cpu_mutex_work_func);
-	kthread_queue_work(cpum->worker, &current->cpu_mutex_work);
+	if (!READ_ONCE(current->cpu_mutex_need_worker)) {
+		WARN_ON_ONCE(current->cpu_mutex_worker_active);
+		WRITE_ONCE(current->cpu_mutex_need_worker, 1);
+		kthread_init_work(&current->cpu_mutex_work, cpu_mutex_work_func);
+		kthread_queue_work(cpum->worker, &current->cpu_mutex_work);
+	}
 	preempt_enable();
 	schedule();
 }
@@ -3190,11 +3201,6 @@ static inline void finish_lock_switch(struct rq *rq)
 
 static void cpu_mutex_preempt_ipi(void *data)
 {
-	/*
-	 * Order prior userspace memory accesses of local CPU with following
-	 * remote userspace memory accesses.
-	 */
-	//smp_mb();
 	set_tsk_need_resched(current);
 }
 
@@ -3206,38 +3212,14 @@ static void cpu_mutex_preempt_ipi(void *data)
 static void cpu_mutex_finish_switch_worker(struct task_struct *prev)
 {
 	struct cpu_mutex *cpum = per_cpu_ptr(&cpu_mutex, smp_processor_id());
-	struct task_struct *running_task = READ_ONCE(cpum->running_task);
 	int ret;
 
-	if (!cpum->worker || prev != cpum->worker->task || !running_task)
+	if (!cpum->worker || prev != cpum->worker->task)
 		return;
 	ret = smp_call_function_single(task_cpu(running_task),
 				       cpu_mutex_preempt_ipi,
 				       NULL, 1);
 	WARN_ON_ONCE(ret);
-	/*
-	 * Order prior userspace memory accesses of remote CPU with following
-	 * local userspace memory accesses.
-	 */
-	//smp_mb();
-	//WRITE_ONCE(cpum->running_task, NULL);
-}
-
-static void cpu_mutex_signal_worker(void *data)
-{
-	struct cpu_mutex *cpum = per_cpu_ptr(&cpu_mutex, smp_processor_id());
-	struct task_struct *task = data, *running = READ_ONCE(cpum->running_task);
-
-	//TODO: may be running another task if the running task migrated to a
-	//different CPU when awakened by worker thread.
-	//WARN_ON_ONCE(running && running != task);
-	/*
-	 * Order prior userspace memory accesses of remote CPU with following
-	 * local userspace memory accesses.
-	 */
-	smp_mb();
-	if (running == task)
-		WRITE_ONCE(cpum->running_task, NULL);
 }
 
 /*
@@ -3247,23 +3229,18 @@ static void cpu_mutex_signal_worker(void *data)
  */
 static void cpu_mutex_finish_switch_task(struct task_struct *prev, long prev_state)
 {
-	struct cpu_mutex *cpum;
 	int prev_cpu_mutex, ret;
 
 	prev_cpu_mutex = READ_ONCE(prev->cpu_mutex);
-	if (prev_cpu_mutex < 0 || prev_cpu_mutex == smp_processor_id())
+	if (prev_cpu_mutex < 0 || !READ_ONCE(current->cpu_mutex_need_worker))
 		return;
-	cpum = per_cpu_ptr(&cpu_mutex, prev_cpu_mutex);
-	if (READ_ONCE(cpum->running_task) == prev) {
-		/*
-		 * Order prior userspace memory accesses of local CPU with following
-		 * remote userspace memory accesses.
-		 */
-		smp_mb();
-		ret = smp_call_function_single(prev_cpu_mutex, cpu_mutex_signal_worker,
-					       prev, 1);
-		WARN_ON_ONCE(ret);
-	}
+	/*
+	 * Order prior userspace memory accesses of local CPU with following
+	 * remote userspace memory accesses.
+	 */
+	smp_mb();
+	WRITE_ONCE(current->cpu_mutex_need_worker, 0);
+	kthread_cancel_work_sync(&current->cpu_mutex_work);
 }
 
 static void cpu_mutex_finish_switch(struct task_struct *prev, long prev_state)
@@ -8107,9 +8084,6 @@ static void cpu_mutex_spawn_worker(int cpu)
 	}
 	cpum->worker = worker;
 	cpum->cpu = cpu;
-	cpum->running_task = NULL;
-	//kthread_init_delayed_work(&cpum->dwork, cpu_mutex_work);
-	//WARN_ON_ONCE(!kthread_queue_delayed_work(worker, &cpum->dwork, 250));
 }
 
 static int cpu_mutex_startup(unsigned int cpu)
@@ -8187,38 +8161,20 @@ static int cpu_mutex_clear(void)
 {
 	int cpu, ret;
 
-	//TODO: remove from target cpu's cpu_mutex_queue
-	//if last user of target cpu's worker thread is blocked if we
-	//are last user.
-	//Now scheduler is free to run us without constraints.
-	preempt_disable();
 	cpu = READ_ONCE(current->cpu_mutex);
-	if (cpu >= 0) {
-		//printk("cpu mutex clear signal cpu %d from task %p\n", cpu, current);
-		WRITE_ONCE(current->cpu_mutex, -1);
-		if (cpu != smp_processor_id()) {
-			struct task_struct *running;
-			struct cpu_mutex *cpum;
-
-			/*
-			 * We may not be currently running on the queue if
-			 * preempted in kernel space within this system call.
-			 */
-			cpum = per_cpu_ptr(&cpu_mutex, cpu);
-			running = READ_ONCE(cpum->running_task);
-			if (running == current) {
-				/*
-				 * Order prior userspace memory accesses of local CPU with
-				 * following remote userspace memory accesses.
-				 */
-				smp_mb();
-				ret = smp_call_function_single(cpu, cpu_mutex_signal_worker,
-							       current, 1);
-				WARN_ON_ONCE(ret);
-			}
-		}
+	if (cpu < 0)
+		return;
+	//printk("cpu mutex clear signal cpu %d from task %p\n", cpu, current);
+	WRITE_ONCE(current->cpu_mutex, -1);
+	if (READ_ONCE(current->cpu_mutex_need_worker)) {
+		/*
+		 * Order prior userspace memory accesses of local CPU
+		 * with following remote userspace memory accesses.
+		 */
+		smp_mb();
+		WRITE_ONCE(current->cpu_mutex_need_worker, 0);
+		kthread_cancel_work_sync(&current->cpu_mutex_work);
 	}
-	preempt_enable();
 	return 0;
 }
 
