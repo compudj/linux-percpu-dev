@@ -42,6 +42,7 @@ DEFINE_PER_CPU_SHARED_ALIGNED(struct rq, runqueues);
 struct cpu_mutex {
 	struct kthread_worker *worker;
 	int cpu;				/* protected cpu */
+	int worker_preempted;
 };
 
 DEFINE_PER_CPU(struct cpu_mutex, cpu_mutex);
@@ -1702,13 +1703,19 @@ int set_cpus_allowed_ptr(struct task_struct *p, const struct cpumask *new_mask)
 }
 EXPORT_SYMBOL_GPL(set_cpus_allowed_ptr);
 
+static void cpu_mutex_preempt_ipi(void *data)
+{
+	set_tsk_need_resched(current);
+}
+
 static void cpu_mutex_work_func(struct kthread_work *work)
 {
-	struct cpu_mutex *cpum = per_cpu_ptr(&cpu_mutex, smp_processor_id());
 	struct task_struct *task = container_of(work, struct task_struct,
 						cpu_mutex_work);
+	struct cpu_mutex *cpum = per_cpu_ptr(&cpu_mutex, smp_processor_id());
 
 	/* Set worker active for task. */
+	WRITE_ONCE(cpum->worker_preempted, 0);
 	WRITE_ONCE(task->cpu_mutex_worker_active, 1);
 
 	/*
@@ -1726,10 +1733,25 @@ static void cpu_mutex_work_func(struct kthread_work *work)
 	/*
 	 * Consume CPU time as long as an associated task is running on another CPU.
 	 */
-	while (READ_ONCE(task->cpu_mutex_need_worker)) {
+	while (READ_ONCE(task->cpu_mutex_need_worker)
+	       && !READ_ONCE(cpum->worker_preempted)) {
 		cond_resched();
 		cpu_relax();
 	}
+
+	/*
+	 * If worker was preempted, we need to preempt the associated task with
+	 * an IPI.
+	 */
+	if (READ_ONCE(cpum->worker_preempted)) {
+		int ret;
+
+		ret = smp_call_function_single(task_cpu(task),
+					       cpu_mutex_preempt_ipi,
+					       NULL, 1);
+		WARN_ON_ONCE(ret);
+	}
+
 	/*
 	 * Order prior userspace memory accesses of remote CPU with following
 	 * local userspace memory accesses.
@@ -1741,12 +1763,9 @@ static void cpu_mutex_work_func(struct kthread_work *work)
 void __cpu_mutex_handle_notify_resume(struct ksignal *sig, struct pt_regs *regs)
 {
 	int task_cpu_mutex = READ_ONCE(current->cpu_mutex);
-	struct cpu_mutex *cpum;
-	int ret;
 
 	WARN_ON_ONCE(task_cpu_mutex < 0);
 	preempt_disable();
-	cpum = per_cpu_ptr(&task_cpu_mutex, task_cpu_mutex);
 	if (READ_ONCE(current->cpu_mutex_need_worker)
 	    && task_cpu_mutex == smp_processor_id()) {
 		WRITE_ONCE(current->cpu_mutex_need_worker, 0);
@@ -1764,6 +1783,8 @@ void __cpu_mutex_handle_notify_resume(struct ksignal *sig, struct pt_regs *regs)
 	//printk("cpu mutex notify resume for cpu %d from task %p\n", task_cpu_mutex,
 	//       current);
 	if (!READ_ONCE(current->cpu_mutex_need_worker)) {
+		struct cpu_mutex *cpum = per_cpu_ptr(&cpu_mutex, task_cpu_mutex);
+
 		WARN_ON_ONCE(current->cpu_mutex_worker_active);
 		WRITE_ONCE(current->cpu_mutex_need_worker, 1);
 		kthread_init_work(&current->cpu_mutex_work, cpu_mutex_work_func);
@@ -3199,11 +3220,6 @@ static inline void finish_lock_switch(struct rq *rq)
 # define finish_arch_post_lock_switch()	do { } while (0)
 #endif
 
-static void cpu_mutex_preempt_ipi(void *data)
-{
-	set_tsk_need_resched(current);
-}
-
 /*
  * If we preempt the cpu mutex worker, we need to IPI the CPU
  * running the thread currently associated to it before scheduling
@@ -3216,10 +3232,7 @@ static void cpu_mutex_finish_switch_worker(struct task_struct *prev)
 
 	if (!cpum->worker || prev != cpum->worker->task)
 		return;
-	ret = smp_call_function_single(task_cpu(running_task),
-				       cpu_mutex_preempt_ipi,
-				       NULL, 1);
-	WARN_ON_ONCE(ret);
+	WRITE_ONCE(cpum->worker_preempted, 1);
 }
 
 /*
