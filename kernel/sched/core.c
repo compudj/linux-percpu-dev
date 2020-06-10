@@ -3228,7 +3228,6 @@ static inline void finish_lock_switch(struct rq *rq)
 static void cpu_mutex_finish_switch_worker(struct task_struct *prev)
 {
 	struct cpu_mutex *cpum = per_cpu_ptr(&cpu_mutex, smp_processor_id());
-	int ret;
 
 	if (!cpum->worker || prev != cpum->worker->task)
 		return;
@@ -3242,7 +3241,7 @@ static void cpu_mutex_finish_switch_worker(struct task_struct *prev)
  */
 static void cpu_mutex_finish_switch_task(struct task_struct *prev, long prev_state)
 {
-	int prev_cpu_mutex, ret;
+	int prev_cpu_mutex;
 
 	prev_cpu_mutex = READ_ONCE(prev->cpu_mutex);
 	if (prev_cpu_mutex < 0 || !READ_ONCE(current->cpu_mutex_need_worker))
@@ -8176,7 +8175,7 @@ static int cpu_mutex_clear(void)
 
 	cpu = READ_ONCE(current->cpu_mutex);
 	if (cpu < 0)
-		return;
+		return 0;
 	//printk("cpu mutex clear signal cpu %d from task %p\n", cpu, current);
 	WRITE_ONCE(current->cpu_mutex, -1);
 	if (READ_ONCE(current->cpu_mutex_need_worker)) {
