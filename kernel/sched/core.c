@@ -1735,7 +1735,8 @@ static void cpu_mutex_work_func(struct kthread_work *work)
 	 * Consume CPU time as long as an associated task is running on another CPU.
 	 */
 	while (READ_ONCE(task->cpu_mutex_need_worker)
-	       && !READ_ONCE(cpum->worker_preempted)) {
+	       && !READ_ONCE(cpum->worker_preempted)
+	       && task->state != TASK_DEAD) {
 		cond_resched();
 		cpu_relax();
 	}
