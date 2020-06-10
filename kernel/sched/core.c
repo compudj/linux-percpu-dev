@@ -8171,7 +8171,7 @@ static int cpu_mutex_set(int cpu)
 //TODO: should perform clear on thread exit
 static int cpu_mutex_clear(void)
 {
-	int cpu, ret;
+	int cpu;
 
 	cpu = READ_ONCE(current->cpu_mutex);
 	if (cpu < 0)
