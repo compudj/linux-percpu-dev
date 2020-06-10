@@ -1717,6 +1717,7 @@ static void cpu_mutex_work_func(struct kthread_work *work)
 	/* Set worker active for task. */
 	WRITE_ONCE(cpum->worker_preempted, 0);
 	WRITE_ONCE(task->cpu_mutex_worker_active, 1);
+	printk("cpu_mutex_work_func active from cpu %d task %p\n", smp_processor_id(), task);
 
 	/*
 	 * Order prior userspace memory accesses of local CPU with following
@@ -1724,7 +1725,7 @@ static void cpu_mutex_work_func(struct kthread_work *work)
 	 */
 	smp_mb();
 
-	//printk("cpu_mutex_work_func wakeup from cpu %d task %p\n", smp_processor_id(), task);
+	printk("cpu_mutex_work_func wakeup from cpu %d task %p\n", smp_processor_id(), task);
 	/*
 	 * Wake up target task.
 	 */
@@ -1745,11 +1746,15 @@ static void cpu_mutex_work_func(struct kthread_work *work)
 	 */
 	if (READ_ONCE(cpum->worker_preempted)) {
 		int ret;
+		int cpu = task_cpu(task);
 
-		ret = smp_call_function_single(task_cpu(task),
-					       cpu_mutex_preempt_ipi,
-					       NULL, 1);
-		WARN_ON_ONCE(ret);
+		printk("cpu_mutex_work_func preempted from cpu %d task %p\n", smp_processor_id(), task);
+		if (cpu >= 0) {
+			ret = smp_call_function_single(cpu,
+						       cpu_mutex_preempt_ipi,
+						       NULL, 1);
+			WARN_ON_ONCE(ret);
+		}
 	}
 
 	/*
@@ -1757,6 +1762,7 @@ static void cpu_mutex_work_func(struct kthread_work *work)
 	 * local userspace memory accesses.
 	 */
 	smp_mb();
+	printk("cpu_mutex_work_func inactive from cpu %d task %p\n", smp_processor_id(), task);
 	WRITE_ONCE(task->cpu_mutex_worker_active, 0);
 	put_task_struct(task);
 }
@@ -1768,7 +1774,6 @@ void __cpu_mutex_handle_notify_resume(struct ksignal *sig, struct pt_regs *regs)
 	WARN_ON_ONCE(task_cpu_mutex < 0);
 	preempt_disable();
 	if (task_cpu_mutex == smp_processor_id()) {
-		WRITE_ONCE(current->cpu_mutex_running, 1);
 		if (READ_ONCE(current->cpu_mutex_need_worker)) {
 			WRITE_ONCE(current->cpu_mutex_need_worker, 0);
 			preempt_enable();
@@ -1776,22 +1781,30 @@ void __cpu_mutex_handle_notify_resume(struct ksignal *sig, struct pt_regs *regs)
 		} else {
 			preempt_enable();
 		}
+		printk("cpu mutex notify resume run same cpu for cpu %d from task %p\n", task_cpu_mutex,
+		       current);
 		return;
 	}
-	if (READ_ONCE(current->cpu_mutex_worker_active)) {
-		WRITE_ONCE(current->cpu_mutex_running, 1);
+	if (READ_ONCE(current->cpu_mutex_worker_active)
+	    && !READ_ONCE(current->cpu_mutex_preempted)) {
 		preempt_enable();
+		printk("cpu mutex notify resume run diff cpu for cpu %d from task %p\n", task_cpu_mutex,
+		       current);
 		return;
 	}
 	preempt_enable();
 
-	if (!READ_ONCE(current->cpu_mutex_need_worker))
+	//TODO
+	if (!READ_ONCE(current->cpu_mutex_need_worker)
+	    && READ_ONCE(current->cpu_mutex_preempted)) {
+		WRITE_ONCE(current->cpu_mutex_preempted, 0);
 		kthread_cancel_work_sync(&current->cpu_mutex_work);
+	}
 
+	preempt_disable();
 	set_current_state(TASK_INTERRUPTIBLE);
-	WRITE_ONCE(current->cpu_mutex_running, 0);
-	//printk("cpu mutex notify resume for cpu %d from task %p\n", task_cpu_mutex,
-	//       current);
+	printk("cpu mutex notify resume block for cpu %d from task %p\n", task_cpu_mutex,
+	       current);
 	if (!READ_ONCE(current->cpu_mutex_need_worker)) {
 		struct cpu_mutex *cpum = per_cpu_ptr(&cpu_mutex, task_cpu_mutex);
 
@@ -1800,7 +1813,10 @@ void __cpu_mutex_handle_notify_resume(struct ksignal *sig, struct pt_regs *regs)
 		kthread_init_work(&current->cpu_mutex_work, cpu_mutex_work_func);
 		kthread_queue_work(cpum->worker, &current->cpu_mutex_work);
 	}
+	preempt_enable();
 	schedule();
+	printk("cpu mutex notify resume unblock for cpu %d from task %p\n", task_cpu_mutex,
+	       current);
 }
 
 void set_task_cpu(struct task_struct *p, unsigned int new_cpu)
@@ -3261,7 +3277,7 @@ static void cpu_mutex_finish_switch_task(struct task_struct *prev, long prev_sta
 	 */
 	smp_mb();
 	WRITE_ONCE(current->cpu_mutex_need_worker, 0);
-	WRITE_ONCE(current->cpu_mutex_running, 0);
+	WRITE_ONCE(current->cpu_mutex_preempted, 1);
 }
 
 static void cpu_mutex_finish_switch(struct task_struct *prev, long prev_state)
@@ -8155,7 +8171,7 @@ static int cpu_mutex_set(int cpu)
 	if (cpu < 0 || !cpu_possible(cpu)) {
 		return -EINVAL;
 	}
-	//printk("cpu mutex set cpu %d from task %p\n", cpu, current);
+	printk("cpu mutex set cpu %d from task %p\n", cpu, current);
 	//preempt_disable();
 	WRITE_ONCE(current->cpu_mutex, cpu);
 	set_tsk_thread_flag(current, TIF_NOTIFY_RESUME);
@@ -8185,7 +8201,7 @@ static int cpu_mutex_clear(void)
 	cpu = READ_ONCE(current->cpu_mutex);
 	if (cpu < 0)
 		return 0;
-	//printk("cpu mutex clear signal cpu %d from task %p\n", cpu, current);
+	printk("cpu mutex clear signal cpu %d from task %p\n", cpu, current);
 	WRITE_ONCE(current->cpu_mutex, -1);
 	if (READ_ONCE(current->cpu_mutex_need_worker)) {
 		/*
@@ -8194,6 +8210,7 @@ static int cpu_mutex_clear(void)
 		 */
 		smp_mb();
 		WRITE_ONCE(current->cpu_mutex_need_worker, 0);
+		WRITE_ONCE(current->cpu_mutex_preempted, 0);
 		kthread_cancel_work_sync(&current->cpu_mutex_work);
 	}
 	return 0;

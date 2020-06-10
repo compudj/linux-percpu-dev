@@ -688,7 +688,7 @@ struct task_struct {
 	struct kthread_work		cpu_mutex_work;
 	int				cpu_mutex_need_worker;
 	int				cpu_mutex_worker_active;
-	int				cpu_mutex_running;
+	int				cpu_mutex_preempted;
 	unsigned int			wakee_flips;
 	unsigned long			wakee_flip_decay_ts;
 	struct task_struct		*last_wakee;
