@@ -1769,7 +1769,6 @@ void __cpu_mutex_handle_notify_resume(struct ksignal *sig, struct pt_regs *regs)
 	if (READ_ONCE(current->cpu_mutex_need_worker)
 	    && task_cpu_mutex == smp_processor_id()) {
 		WRITE_ONCE(current->cpu_mutex_need_worker, 0);
-		kthread_cancel_work_sync(&current->cpu_mutex_work);
 		preempt_enable();
 		return;
 	}
@@ -1786,6 +1785,7 @@ void __cpu_mutex_handle_notify_resume(struct ksignal *sig, struct pt_regs *regs)
 		struct cpu_mutex *cpum = per_cpu_ptr(&cpu_mutex, task_cpu_mutex);
 
 		WARN_ON_ONCE(current->cpu_mutex_worker_active);
+		kthread_cancel_work_sync(&current->cpu_mutex_work);
 		WRITE_ONCE(current->cpu_mutex_need_worker, 1);
 		kthread_init_work(&current->cpu_mutex_work, cpu_mutex_work_func);
 		kthread_queue_work(cpum->worker, &current->cpu_mutex_work);
@@ -3252,7 +3252,6 @@ static void cpu_mutex_finish_switch_task(struct task_struct *prev, long prev_sta
 	 */
 	smp_mb();
 	WRITE_ONCE(current->cpu_mutex_need_worker, 0);
-	kthread_cancel_work_sync(&current->cpu_mutex_work);
 }
 
 static void cpu_mutex_finish_switch(struct task_struct *prev, long prev_state)
