@@ -1780,7 +1780,6 @@ void __cpu_mutex_handle_notify_resume(struct ksignal *sig, struct pt_regs *regs)
 			WRITE_ONCE(current->cpu_mutex_need_worker, 0);
 			preempt_enable();
 			kthread_cancel_work_sync(&current->cpu_mutex_work);
-			WARN_ON_ONCE(task_cpu_mutex != raw_smp_processor_id());
 		} else {
 			preempt_enable();
 		}
