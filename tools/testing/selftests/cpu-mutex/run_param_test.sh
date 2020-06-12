@@ -31,8 +31,8 @@ IFS="$OLDIFS"
 
 REPS=1000
 SLOW_REPS=100
-#NR_THREADS=$((6*${NR_CPUS}))
-NR_THREADS=1
+NR_THREADS=$((6*${NR_CPUS}))
+#NR_THREADS=2
 
 function do_tests()
 {
