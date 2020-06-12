@@ -1780,6 +1780,7 @@ void __cpu_mutex_handle_notify_resume(struct ksignal *sig, struct pt_regs *regs)
 			WRITE_ONCE(current->cpu_mutex_need_worker, 0);
 			preempt_enable();
 			kthread_cancel_work_sync(&current->cpu_mutex_work);
+			WARN_ON_ONCE(task_cpu_mutex != raw_smp_processor_id());
 		} else {
 			preempt_enable();
 		}
@@ -3260,6 +3261,9 @@ static void cpu_mutex_finish_switch_worker(struct task_struct *prev)
 	running_task = READ_ONCE(cpum->running);
 	if (!running_task)
 		return;
+	WRITE_ONCE(running_task->cpu_mutex_worker_active, 0);
+	WRITE_ONCE(cpum->running, NULL);
+
 	/*
 	 * If worker was preempted, we need to preempt the associated task with
 	 * an IPI.
