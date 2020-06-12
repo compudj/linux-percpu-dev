@@ -1786,6 +1786,8 @@ loop:
 		}
 		//printk("cpu mutex notify resume run same cpu for cpu %d from task %p\n", task_cpu_mutex,
 		//       current);
+		if (raw_smp_processor_id() != task_cpu_mutex)
+			goto loop;
 		return;
 	}
 	if (READ_ONCE(current->cpu_mutex_worker_active)) {
