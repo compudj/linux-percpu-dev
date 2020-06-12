@@ -1773,6 +1773,7 @@ void __cpu_mutex_handle_notify_resume(struct ksignal *sig, struct pt_regs *regs)
 {
 	int task_cpu_mutex = READ_ONCE(current->cpu_mutex);
 
+loop:
 	WARN_ON_ONCE(task_cpu_mutex < 0);
 	preempt_disable();
 	if (task_cpu_mutex == smp_processor_id()) {
@@ -1815,6 +1816,7 @@ void __cpu_mutex_handle_notify_resume(struct ksignal *sig, struct pt_regs *regs)
 	schedule();
 	//printk("cpu mutex notify resume unblock for cpu %d from task %p state 0x%lx\n", task_cpu_mutex,
 	//       current, current->state);
+	goto loop;
 }
 
 void set_task_cpu(struct task_struct *p, unsigned int new_cpu)
