@@ -3265,6 +3265,15 @@ static void cpu_mutex_finish_switch_worker(struct task_struct *prev)
 	WRITE_ONCE(cpum->worker_preempted, 1);
 }
 
+static void cpu_mutex_remote_mb(void *data)
+{
+	/*
+	 * Order prior userspace memory accesses of remote CPU with following
+	 * local userspace memory accesses.
+	 */
+	smp_mb();
+}
+
 /*
  * If we preempt a task currently associated with a cpu mutex worker,
  * we need to tell the worker to stop using cpu time.
@@ -3272,7 +3281,7 @@ static void cpu_mutex_finish_switch_worker(struct task_struct *prev)
  */
 static void cpu_mutex_finish_switch_task(struct task_struct *prev, long prev_state)
 {
-	int prev_cpu_mutex;
+	int prev_cpu_mutex, ret;
 
 	prev_cpu_mutex = READ_ONCE(prev->cpu_mutex);
 	if (prev_cpu_mutex < 0 || !READ_ONCE(current->cpu_mutex_need_worker))
@@ -3282,6 +3291,10 @@ static void cpu_mutex_finish_switch_task(struct task_struct *prev, long prev_sta
 	 * remote userspace memory accesses.
 	 */
 	smp_mb();
+	ret = smp_call_function_single(prev_cpu_mutex,
+				       cpu_mutex_remote_mb,
+				       NULL, 1);
+	WARN_ON_ONCE(ret);
 	WRITE_ONCE(current->cpu_mutex_need_worker, 0);
 }
 
