@@ -1742,6 +1742,8 @@ static void cpu_mutex_work_func(struct kthread_work *work)
 	/*
 	 * Consume CPU time as long as an associated task is running on another CPU.
 	 */
+	//TODO: don't burn cpu time when our cpu is offline. Needed to be
+	//gentle with case of 1 cpu active in system.
 	while (READ_ONCE(task->cpu_mutex_need_worker)
 	       && !READ_ONCE(cpum->worker_preempted)
 	       && task->state != TASK_DEAD) {
