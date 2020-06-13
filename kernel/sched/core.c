@@ -1757,32 +1757,20 @@ static void cpu_mutex_work_func(struct kthread_work *work)
 	trace_printk("cpu_mutex_work_func inactive from cpu %d task %p\n", smp_processor_id(), task);
 	WRITE_ONCE(cpum->running, NULL);
 	WRITE_ONCE(task->cpu_mutex_worker_active, 0);
-
-	/* Requeue if still needed. */
-	if (READ_ONCE(task->cpu_mutex_need_worker) && task->state != TASK_DEAD) {
-		trace_printk("cpu_mutex_work_func requeue from cpu %d task %p state 0x%lx\n", smp_processor_id(), task, task->state);
-		       
-		kthread_init_work(&task->cpu_mutex_work, cpu_mutex_work_func);
-		kthread_queue_work(cpum->worker, &task->cpu_mutex_work);
-	} else {
-		put_task_struct(task);
-	}
+	put_task_struct(task);
 }
 
 void __cpu_mutex_handle_notify_resume(struct ksignal *sig, struct pt_regs *regs)
 {
 	int task_cpu_mutex = READ_ONCE(current->cpu_mutex);
+	struct cpu_mutex *cpum = per_cpu_ptr(&cpu_mutex, task_cpu_mutex);
 
 loop:
 	WARN_ON_ONCE(task_cpu_mutex < 0);
 	preempt_disable();
 	if (task_cpu_mutex == smp_processor_id()) {
-		if (READ_ONCE(current->cpu_mutex_need_worker)) {
-			WRITE_ONCE(current->cpu_mutex_need_worker, 0);
-			preempt_enable();
-		} else {
-			preempt_enable();
-		}
+		WRITE_ONCE(current->cpu_mutex_need_worker, 0);
+		preempt_enable();
 		if (current->cpu_mutex_queued_work) {
 			if (kthread_cancel_work_sync(&current->cpu_mutex_work))
 				put_task_struct(current);
@@ -1802,7 +1790,7 @@ loop:
 	}
 	preempt_enable();
 
-	if (!READ_ONCE(current->cpu_mutex_need_worker) && current->cpu_mutex_queued_work) {
+	if (current->cpu_mutex_queued_work) {
 		if (kthread_cancel_work_sync(&current->cpu_mutex_work))
 			put_task_struct(current);
 		current->cpu_mutex_queued_work = 0;
@@ -1812,16 +1800,12 @@ loop:
 	set_current_state(TASK_INTERRUPTIBLE);
 	trace_printk("cpu mutex notify resume block for cpu %d from task %p state 0x%lx\n", task_cpu_mutex,
 	       current, current->state);
-	if (!READ_ONCE(current->cpu_mutex_need_worker) && !current->cpu_mutex_queued_work) {
-		struct cpu_mutex *cpum = per_cpu_ptr(&cpu_mutex, task_cpu_mutex);
-
-		WARN_ON_ONCE(current->cpu_mutex_worker_active);
-		WRITE_ONCE(current->cpu_mutex_need_worker, 1);
-		get_task_struct(current);
-		kthread_init_work(&current->cpu_mutex_work, cpu_mutex_work_func);
-		kthread_queue_work(cpum->worker, &current->cpu_mutex_work);
-		current->cpu_mutex_queued_work = 1;
-	}
+	WARN_ON_ONCE(current->cpu_mutex_worker_active);
+	WRITE_ONCE(current->cpu_mutex_need_worker, 1);
+	get_task_struct(current);
+	kthread_init_work(&current->cpu_mutex_work, cpu_mutex_work_func);
+	kthread_queue_work(cpum->worker, &current->cpu_mutex_work);
+	current->cpu_mutex_queued_work = 1;
 	preempt_enable();
 	schedule();
 	trace_printk("cpu mutex notify resume unblock for cpu %d from task %p state 0x%lx\n", task_cpu_mutex,
