@@ -689,6 +689,7 @@ struct task_struct {
 	int				cpu_mutex_need_worker;
 	int				cpu_mutex_worker_active;
 	int				cpu_mutex_preempted;
+	int				cpu_mutex_queued_work;
 	unsigned int			wakee_flips;
 	unsigned long			wakee_flip_decay_ts;
 	struct task_struct		*last_wakee;
