@@ -629,6 +629,31 @@ struct wake_q_node {
 	struct wake_q_node *next;
 };
 
+struct kthread_work;
+typedef void (*kthread_work_func_t)(struct kthread_work *work);
+void kthread_delayed_work_timer_fn(struct timer_list *t);
+
+enum {
+	KTW_FREEZABLE		= 1 << 0,	/* freeze during suspend */
+};
+
+struct kthread_worker {
+	unsigned int		flags;
+	raw_spinlock_t		lock;
+	struct list_head	work_list;
+	struct list_head	delayed_work_list;
+	struct task_struct	*task;
+	struct kthread_work	*current_work;
+};
+
+struct kthread_work {
+	struct list_head	node;
+	kthread_work_func_t	func;
+	struct kthread_worker	*worker;
+	/* Number of canceling calls that are running at the moment. */
+	int			canceling;
+};
+
 struct task_struct {
 #ifdef CONFIG_THREAD_INFO_IN_TASK
 	/*
@@ -658,6 +683,13 @@ struct task_struct {
 #ifdef CONFIG_THREAD_INFO_IN_TASK
 	/* Current CPU: */
 	unsigned int			cpu;
+#endif
+#ifdef CONFIG_SCHED_PAIR_CPU
+	int				pair_cpu;
+	struct kthread_work		pair_cpu_work;
+	int				pair_cpu_need_worker;
+	int				pair_cpu_worker_active;
+	int				pair_cpu_queued_work;
 #endif
 	unsigned int			wakee_flips;
 	unsigned long			wakee_flip_decay_ts;
@@ -1876,6 +1908,74 @@ extern long sched_getaffinity(pid_t pid, struct cpumask *mask);
 
 #ifndef TASK_SIZE_OF
 #define TASK_SIZE_OF(tsk)	TASK_SIZE
+#endif
+
+#ifdef CONFIG_SCHED_PAIR_CPU
+
+static inline void sched_pair_cpu_set_notify_resume(struct task_struct *t)
+{
+	if (current->pair_cpu >= 0)
+		set_tsk_thread_flag(t, TIF_NOTIFY_RESUME);
+}
+
+static inline void sched_pair_cpu_preempt(struct task_struct *t)
+{
+	sched_pair_cpu_set_notify_resume(t);
+}
+
+void __sched_pair_cpu_handle_notify_resume(struct ksignal *sig,
+					   struct pt_regs *regs);
+void sched_pair_cpu_clear(void);
+
+static inline void sched_pair_cpu_handle_notify_resume(struct ksignal *ksig,
+						       struct pt_regs *regs)
+{
+	if (current->pair_cpu >= 0)
+		__sched_pair_cpu_handle_notify_resume(ksig, regs);
+}
+
+/*
+ * Clear paired cpu on clone.
+ */
+static inline void sched_pair_cpu_fork(struct task_struct *t,
+				       unsigned long clone_flags)
+{
+	t->pair_cpu = -1;
+	t->pair_cpu_need_worker = 0;
+	t->pair_cpu_worker_active = 0;
+	t->pair_cpu_queued_work = 0;
+	memset(&t->pair_cpu_work, 0, sizeof(t->pair_cpu_work));
+}
+
+/*
+ * Clear paired cpu on exec.
+ */
+static inline void sched_pair_cpu_execve(void)
+{
+	sched_pair_cpu_clear();
+	memset(&current->pair_cpu_work, 0, sizeof(current->pair_cpu_work));
+}
+
+#else
+
+static inline void sched_pair_cpu_set_notify_resume(struct task_struct *t)
+{
+}
+static inline void sched_pair_cpu_preempt(struct task_struct *t)
+{
+}
+static inline void sched_pair_cpu_handle_notify_resume(struct ksignal *ksig,
+						       struct pt_regs *regs)
+{
+}
+static inline void sched_pair_cpu_fork(struct task_struct *t,
+				       unsigned long clone_flags)
+{
+}
+static inline void sched_pair_cpu_execve(void)
+{
+}
+
 #endif
 
 #ifdef CONFIG_RSEQ

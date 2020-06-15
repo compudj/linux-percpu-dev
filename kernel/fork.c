@@ -2225,6 +2225,7 @@ static __latent_entropy struct task_struct *copy_process(
 	copy_seccomp(p);
 
 	rseq_fork(p, clone_flags);
+	sched_pair_cpu_fork(p, clone_flags);
 
 	/* Don't start children in a dying pid namespace */
 	if (unlikely(!(ns_of_pid(pid)->pid_allocated & PIDNS_ADDING))) {

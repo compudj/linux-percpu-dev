@@ -37,6 +37,25 @@ EXPORT_TRACEPOINT_SYMBOL_GPL(sched_overutilized_tp);
 
 DEFINE_PER_CPU_SHARED_ALIGNED(struct rq, runqueues);
 
+#ifdef CONFIG_SCHED_PAIR_CPU
+
+#define MAX_SCHED_PAIR_CPU_WORK_NS	4000000		/* 4 ms */
+
+#define SCHED_PAIR_CPU_CMD_BITMASK	\
+	(SCHED_PAIR_CPU_CMD_SET | SCHED_PAIR_CPU_CMD_CLEAR)
+
+struct pair_cpu {
+	struct kthread_worker *worker;
+	int cpu;				/* protected cpu */
+	int worker_preempted;
+	struct task_struct *running;
+};
+
+static DEFINE_PER_CPU(struct pair_cpu, pair_cpu);
+static enum cpuhp_state pair_cpu_hp_online;
+
+#endif /* CONFIG_SCHED_PAIR_CPU */
+
 #if defined(CONFIG_SCHED_DEBUG) && defined(CONFIG_JUMP_LABEL)
 /*
  * Debugging: various feature bits
@@ -1692,6 +1711,150 @@ int set_cpus_allowed_ptr(struct task_struct *p, const struct cpumask *new_mask)
 }
 EXPORT_SYMBOL_GPL(set_cpus_allowed_ptr);
 
+#ifdef CONFIG_SCHED_PAIR_CPU
+
+static void pair_cpu_preempt_ipi(void *data)
+{
+	trace_printk("pair_cpu_preempt_ipi on cpu %d task %p\n", smp_processor_id(), current);
+	/*
+	 * Order prior userspace memory accesses of local CPU with following
+	 * remote userspace memory accesses.
+	 */
+	smp_mb();
+	set_tsk_need_resched(current);
+}
+
+static void pair_cpu_work_func(struct kthread_work *work)
+{
+	struct task_struct *task = container_of(work, struct task_struct,
+						pair_cpu_work);
+	int task_pair_cpu = READ_ONCE(task->pair_cpu);
+	struct pair_cpu *cpum;
+	ktime_t time_begin = ktime_get();
+	bool timeout = false;
+
+	WARN_ON_ONCE(task_pair_cpu < 0);
+	cpum = per_cpu_ptr(&pair_cpu, task_pair_cpu);
+
+	preempt_disable();
+	/* Set worker active for task. */
+	WRITE_ONCE(cpum->worker_preempted, 0);
+	WRITE_ONCE(cpum->running, task);
+	/*
+	 * Order prior userspace memory accesses of local CPU with following
+	 * remote userspace memory accesses.
+	 */
+	smp_mb();
+	WRITE_ONCE(task->pair_cpu_worker_active, 1);
+	trace_printk("active from cpu %d task %p\n", smp_processor_id(), task);
+	preempt_enable();
+
+	trace_printk("wakeup from cpu %d task %p\n", smp_processor_id(), task);
+	/*
+	 * Wake up target task.
+	 */
+	wake_up_process(task);
+
+	/*
+	 * Consume CPU time as long as an associated task is running on another
+	 * CPU.
+	 */
+	while (READ_ONCE(task->pair_cpu_need_worker)
+	       && !READ_ONCE(cpum->worker_preempted)
+	       && task->state != TASK_DEAD) {
+		timeout = ktime_sub(ktime_get(), time_begin) > MAX_SCHED_PAIR_CPU_WORK_NS;
+		if (timeout)
+			break;
+		touch_softlockup_watchdog();
+		cond_resched();
+		cpu_relax();
+	}
+
+	trace_printk("inactive from cpu %d task %p\n", smp_processor_id(), task);
+	WRITE_ONCE(cpum->running, NULL);
+	WRITE_ONCE(task->pair_cpu_worker_active, 0);
+
+	if (timeout) {
+		/*
+		 * If worker timed out, we need to preempt the associated task with
+		 * an IPI. The IPI may fail if targetting an offline cpu. This implies
+		 * that a preemption of the target task has happened since it ran on
+		 * that cpu.
+		 */
+		int cpu = task_cpu(task);
+
+		trace_printk("worker timeout from cpu %d task %p task_cpu %d\n", smp_processor_id(), task, cpu);
+		if (cpu >= 0)
+			smp_call_function_single(cpu, pair_cpu_preempt_ipi, NULL, 1);
+	}
+
+	/*
+	 * Order prior userspace memory accesses of remote CPU with following
+	 * local userspace memory accesses.
+	 */
+	smp_mb();
+
+	put_task_struct(task);
+}
+
+void __sched_pair_cpu_handle_notify_resume(struct ksignal *sig,
+					   struct pt_regs *regs)
+{
+	int task_pair_cpu = READ_ONCE(current->pair_cpu);
+	struct pair_cpu *cpum = per_cpu_ptr(&pair_cpu, task_pair_cpu);
+
+	WARN_ON_ONCE(task_pair_cpu < 0);
+	preempt_disable();
+	if (task_pair_cpu == smp_processor_id()) {
+		WRITE_ONCE(current->pair_cpu_need_worker, 0);
+		preempt_enable();
+		if (current->pair_cpu_queued_work) {
+			if (kthread_cancel_work_sync(&current->pair_cpu_work))
+				put_task_struct(current);
+			current->pair_cpu_queued_work = 0;
+		}
+		trace_printk("notify resume run same cpu for cpu %d from task %p\n", task_pair_cpu,
+		       current);
+		return;
+	}
+	if (READ_ONCE(current->pair_cpu_worker_active)) {
+		preempt_enable();
+		trace_printk("notify resume run diff cpu for cpu %d from task %p\n", task_pair_cpu,
+		       current);
+		/*
+		 *
+		 * Order prior userspace memory accesses of remote CPU with
+		 * following local userspace memory accesses.
+		 */
+		smp_mb();
+		return;
+	}
+	preempt_enable();
+
+	if (current->pair_cpu_queued_work) {
+		if (kthread_cancel_work_sync(&current->pair_cpu_work))
+			put_task_struct(current);
+		current->pair_cpu_queued_work = 0;
+	}
+
+	preempt_disable();
+	set_current_state(TASK_INTERRUPTIBLE);
+	trace_printk("notify resume block for cpu %d from task %p state 0x%lx\n", task_pair_cpu,
+	       current, current->state);
+	WARN_ON_ONCE(current->pair_cpu_worker_active);
+	WRITE_ONCE(current->pair_cpu_need_worker, 1);
+	get_task_struct(current);
+	kthread_init_work(&current->pair_cpu_work, pair_cpu_work_func);
+	kthread_queue_work(cpum->worker, &current->pair_cpu_work);
+	current->pair_cpu_queued_work = 1;
+	preempt_enable();
+	schedule();
+	trace_printk("notify resume unblock for cpu %d from task %p state 0x%lx\n", task_pair_cpu,
+	       current, current->state);
+}
+
+#endif /* CONFIG_SCHED_PAIR_CPU */
+
 void set_task_cpu(struct task_struct *p, unsigned int new_cpu)
 {
 #ifdef CONFIG_SCHED_DEBUG
@@ -3118,6 +3281,99 @@ static inline void finish_lock_switch(struct rq *rq)
 # define finish_arch_post_lock_switch()	do { } while (0)
 #endif
 
+#ifdef CONFIG_SCHED_PAIR_CPU
+
+/*
+ * If we preempt the cpu mutex worker, we need to IPI the CPU
+ * running the thread currently associated to it before scheduling
+ * other tasks.
+ *
+ * This only targets pair_cpu worker for online cpus.
+ */
+static void pair_cpu_finish_switch_worker(struct task_struct *prev)
+{
+	struct pair_cpu *cpum = per_cpu_ptr(&pair_cpu, smp_processor_id());
+	struct task_struct *running_task;
+	int cpu;
+
+	if (!cpum->worker || prev != cpum->worker->task)
+		return;
+	running_task = READ_ONCE(cpum->running);
+	if (!running_task)
+		return;
+	WRITE_ONCE(cpum->worker_preempted, 1);
+	WRITE_ONCE(running_task->pair_cpu_worker_active, 0);
+	WRITE_ONCE(cpum->running, NULL);
+
+	/*
+	 * If worker was preempted, we need to preempt the associated task with
+	 * an IPI. The IPI may fail if targetting an offline cpu. This implies
+	 * that a preemption of the target task has happened since it ran on
+	 * that cpu.
+	 */
+	cpu = task_cpu(running_task);
+
+	trace_printk("worker preempted from cpu %d task %p task_cpu %d\n", smp_processor_id(), running_task, cpu);
+	if (cpu >= 0) {
+		smp_call_function_single(cpu, pair_cpu_preempt_ipi, NULL, 1);
+		/*
+		 * Order prior userspace memory accesses of remote CPU with
+		 * following local userspace memory accesses.
+		 */
+		smp_mb();
+	}
+}
+
+
+static void pair_cpu_remote_mb(void *data)
+{
+       /*
+        * Order prior userspace memory accesses of remote CPU with following
+        * local userspace memory accesses.
+        */
+       smp_mb();
+}
+
+/*
+ * If we preempt a task currently associated with a cpu mutex worker,
+ * we need to tell the worker to stop using cpu time.
+ */
+static void pair_cpu_finish_switch_task(struct task_struct *prev, long prev_state)
+{
+	int prev_pair_cpu;
+
+	prev_pair_cpu = READ_ONCE(prev->pair_cpu);
+	if (prev_pair_cpu < 0 || !READ_ONCE(prev->pair_cpu_need_worker)
+	    || !READ_ONCE(prev->pair_cpu_worker_active))
+		return;
+	/*
+	* Order prior userspace memory accesses of local CPU with following
+	* remote userspace memory accesses.
+	*/
+	smp_mb();
+	/*
+	* IPI may fail if CPU is offlined, in which case the memory barrier
+	* before the worker completes will suffice.
+	*/
+	smp_call_function_single(prev_pair_cpu, pair_cpu_remote_mb, NULL, 1);
+	WRITE_ONCE(prev->pair_cpu_worker_active, 0);
+	WRITE_ONCE(prev->pair_cpu_need_worker, 0);
+}
+
+static void pair_cpu_finish_switch(struct task_struct *prev, long prev_state)
+{
+	pair_cpu_finish_switch_worker(prev);
+	pair_cpu_finish_switch_task(prev, prev_state);
+}
+
+#else /* CONFIG_SCHED_PAIR_CPU */
+
+static void pair_cpu_finish_switch(struct task_struct *prev, long prev_state)
+{
+}
+
+#endif /* CONFIG_SCHED_PAIR_CPU */
+
 /**
  * prepare_task_switch - prepare to switch tasks
  * @rq: the runqueue preparing to switch
@@ -3206,6 +3462,7 @@ static struct rq *finish_task_switch(struct task_struct *prev)
 	finish_lock_switch(rq);
 	finish_arch_post_lock_switch();
 	kcov_finish_switch(current);
+	pair_cpu_finish_switch(prev, prev_state);
 
 	fire_sched_in_preempt_notifiers(current);
 	/*
@@ -4051,6 +4308,7 @@ static void __sched notrace __schedule(bool preempt)
 	next = pick_next_task(rq, prev, &rf);
 	clear_tsk_need_resched(prev);
 	clear_preempt_need_resched();
+	sched_pair_cpu_preempt(prev);
 
 	if (likely(prev != next)) {
 		rq->nr_switches++;
@@ -4077,6 +4335,7 @@ static void __sched notrace __schedule(bool preempt)
 
 		psi_sched_switch(prev, next, !task_on_rq_queued(prev));
 
+		trace_printk("sched from cpu %d preempt %d prev %p next %p\n", smp_processor_id(), (int)preempt, prev, next);
 		trace_sched_switch(preempt, prev, next);
 
 		/* Also unlocks the rq: */
@@ -6312,6 +6571,7 @@ static void migrate_tasks(struct rq *dead_rq, struct rq_flags *rf)
 
 	rq->stop = stop;
 }
+
 #endif /* CONFIG_HOTPLUG_CPU */
 
 void set_rq_online(struct rq *rq)
@@ -7922,6 +8182,171 @@ struct cgroup_subsys cpu_cgrp_subsys = {
 };
 
 #endif	/* CONFIG_CGROUP_SCHED */
+
+#ifdef CONFIG_SCHED_PAIR_CPU
+
+static void pair_cpu_spawn_worker(int cpu)
+{
+	struct pair_cpu *cpum = per_cpu_ptr(&pair_cpu, cpu);
+	struct kthread_worker *worker;
+
+	WARN_ON_ONCE(cpum->worker);
+	worker = kthread_create_worker_on_cpu(cpu, 0, "pair_cpu/%d", cpu);
+	if (IS_ERR(worker)) {
+		WARN_ON_ONCE(1);
+		return;
+	}
+	cpum->worker = worker;
+	cpum->cpu = cpu;
+}
+
+static int pair_cpu_startup(unsigned int cpu)
+{
+	struct pair_cpu *cpum = per_cpu_ptr(&pair_cpu, cpu);
+	struct task_struct *running_task;
+	int target_task_cpu;
+
+	trace_printk("startup cpu %d cpumutex %p worker %p\n", cpu, cpum, cpum->worker);
+	/* Bind the still running worker thread back to its rightful cpu. */
+	set_cpus_allowed_ptr(cpum->worker->task, cpumask_of(cpu));
+
+	/* Set worker as preempted and ipi other task. */
+	running_task = READ_ONCE(cpum->running);
+	if (!running_task)
+		return 0;
+	WRITE_ONCE(cpum->worker_preempted, 1);
+	WRITE_ONCE(running_task->pair_cpu_worker_active, 0);
+	WRITE_ONCE(cpum->running, NULL);
+
+	/*
+	 * If worker was preempted, we need to preempt the associated task with
+	 * an IPI. The IPI may fail due to CPU hotplug, in which case the task
+	 * has been preempted since it ran on target_task_cpu.
+	 */
+	target_task_cpu = task_cpu(running_task);
+
+	trace_printk("startup cpu %d preempt task %p\n", cpu, running_task);
+	if (target_task_cpu >= 0) {
+		smp_call_function_single(cpu, pair_cpu_preempt_ipi, NULL, 1);
+		/*
+		 * Order prior userspace memory accesses of remote CPU with
+		 * following local userspace memory accesses.
+		 */
+		smp_mb();
+	}
+
+	return 0;
+}
+
+static int pair_cpu_teardown(unsigned int cpu)
+{
+	struct pair_cpu *cpum = per_cpu_ptr(&pair_cpu, cpu);
+
+	trace_printk("teardown cpu %d cpumutex %p worker %p\n", cpu, cpum, cpum->worker);
+	/* The worker thread can now be migrated to any online cpu. */
+	set_cpus_allowed_ptr(cpum->worker->task, cpu_possible_mask);
+	return 0;
+}
+
+static void __init pair_cpu_spawn_workers(void)
+{
+	int ret, cpu;
+
+	cpus_read_lock();
+	for_each_possible_cpu(cpu)
+		pair_cpu_spawn_worker(cpu);
+	ret = cpuhp_setup_state_nocalls_cpuslocked(CPUHP_AP_ONLINE_DYN,
+					"cpumutex",
+					pair_cpu_startup,
+					pair_cpu_teardown);
+	WARN_ON_ONCE(ret < 0);
+	pair_cpu_hp_online = ret;
+	cpus_read_unlock();
+}
+
+late_initcall(pair_cpu_spawn_workers);
+
+static int sched_pair_cpu_set(int cpu)
+{
+	if (cpu < 0 || !cpu_possible(cpu))
+		return -EINVAL;
+	if (READ_ONCE(current->pair_cpu) >= 0)
+		return -EBUSY;
+	trace_printk("set cpu %d from task %p\n", cpu, current);
+	WRITE_ONCE(current->pair_cpu, cpu);
+	set_tsk_thread_flag(current, TIF_NOTIFY_RESUME);
+	/*
+	 * From this point onwards, our user-space can only run if the target
+	 * cpu's worker thread is also running, except if the target cpu is
+	 * offline, in which case the worker thread needs to be handling our
+	 * work item, but can be preempted.
+	 */
+	trace_printk("running cpu %d from task %p\n", cpu, current);
+	return 0;
+}
+
+void sched_pair_cpu_clear(void)
+{
+	int cpu;
+
+	cpu = READ_ONCE(current->pair_cpu);
+	if (cpu < 0)
+		return;
+	trace_printk("signal cpu %d from task %p\n", cpu, current);
+	if (READ_ONCE(current->pair_cpu_need_worker)) {
+		/*
+		 * Order prior userspace memory accesses of local CPU
+		 * with following remote userspace memory accesses.
+		 */
+		smp_mb();
+		WRITE_ONCE(current->pair_cpu_need_worker, 0);
+	}
+	if (current->pair_cpu_queued_work) {
+		if (kthread_cancel_work_sync(&current->pair_cpu_work))
+			put_task_struct(current);
+		current->pair_cpu_queued_work = 0;
+	}
+	WRITE_ONCE(current->pair_cpu, -1);
+	WARN_ON_ONCE(READ_ONCE(current->pair_cpu_worker_active));
+	return;
+}
+
+/*
+ * sys_sched_pair_cpu - Run with mutual exclusion with respect to userspace threads
+ *                      on the target cpu. Does not require migration to the target
+ *                      cpu.
+ * @cmd: command to issue (enum sched_pair_cpu_cmd)
+ * @flags: system call flags
+ * @cpu: cpu where the task should run.
+ *
+ * Returns -EINVAL if cmd is unknown.
+ * Returns -EINVAL if flags are unknown.
+ * Returns -EINVAL if the CPU is not part of the possible CPUs.
+ * Returns -EBUSY if trying to set pairing for the task is already paired to a CPU.
+ *
+ * SCHED_PAIR_CPU_CMD_QUERY: Return the mask of supported commands.
+ * SCHED_PAIR_CPU_CMD_SET:   Request to run with mutual exclusion with respect to
+ *                            userspace threads on the target cpu.
+ * SCHED_PAIR_CPU_CMD_CLEAR: Clear pair_cpu for current task.
+ */
+SYSCALL_DEFINE3(sched_pair_cpu, int, cmd, int, flags, int, cpu)
+{
+	if (unlikely(flags))
+		return -EINVAL;
+	switch (cmd) {
+	case SCHED_PAIR_CPU_CMD_QUERY:
+		return SCHED_PAIR_CPU_CMD_BITMASK;
+	case SCHED_PAIR_CPU_CMD_SET:
+		return sched_pair_cpu_set(cpu);
+	case SCHED_PAIR_CPU_CMD_CLEAR:
+		sched_pair_cpu_clear();
+		return 0;
+	default:
+		return -EINVAL;
+	}
+}
+
+#endif /* CONFIG_SCHED_PAIR_CPU */
 
 void dump_cpu_task(int cpu)
 {

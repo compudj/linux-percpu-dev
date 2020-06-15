@@ -145,4 +145,10 @@ struct clone_args {
 			 SCHED_FLAG_KEEP_ALL		| \
 			 SCHED_FLAG_UTIL_CLAMP)
 
+enum sched_pair_cpu_cmd {
+	SCHED_PAIR_CPU_CMD_QUERY			= 0,
+	SCHED_PAIR_CPU_CMD_SET				= (1 << 0),
+	SCHED_PAIR_CPU_CMD_CLEAR			= (1 << 1),
+};
+
 #endif /* _UAPI_LINUX_SCHED_H */

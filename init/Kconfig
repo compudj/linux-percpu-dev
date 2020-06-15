@@ -1672,6 +1672,18 @@ config RSEQ
 
 	  If unsure, say Y.
 
+config SCHED_PAIR_CPU
+	bool "Enable sched_pair_cpu() system call" if EXPERT
+	default y
+	depends on HAVE_SCHED_PAIR_CPU
+	depends on SMP
+	select RSEQ
+	help
+	  Enable the CPU pairing system call. It provides user-space
+	  a mechanism to update per-cpu data belonging to specific CPUs
+	  with restartable sequences without requiring migration of the
+	  user-space thread to that CPU.
+
 config DEBUG_RSEQ
 	default n
 	bool "Enabled debugging of rseq() system call" if EXPERT
