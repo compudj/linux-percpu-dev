@@ -3267,16 +3267,15 @@ static void cpu_mutex_finish_switch_worker(struct task_struct *prev)
 
 	/*
 	 * If worker was preempted, we need to preempt the associated task with
-	 * an IPI.
+	 * an IPI. The IPI may fail if targetting an offline cpu. This implies
+	 * that a preemption of the target task has happened since it ran on
+	 * that cpu.
 	 */
 	cpu = task_cpu(running_task);
 
 	trace_printk("worker preempted from cpu %d task %p\n", smp_processor_id(), running_task);
 	if (cpu >= 0) {
-		ret = smp_call_function_single(cpu,
-					       cpu_mutex_preempt_ipi,
-					       NULL, 1);
-		WARN_ON_ONCE(ret);
+		smp_call_function_single(cpu, cpu_mutex_preempt_ipi, NULL, 1);
 		/*
 		 * Order prior userspace memory accesses of remote CPU with
 		 * following local userspace memory accesses.
@@ -3311,10 +3310,11 @@ static void cpu_mutex_finish_switch_task(struct task_struct *prev, long prev_sta
 	 * remote userspace memory accesses.
 	 */
 	smp_mb();
-	ret = smp_call_function_single(prev_cpu_mutex,
-				       cpu_mutex_remote_mb,
-				       NULL, 1);
-	WARN_ON_ONCE(ret);
+	/*
+	 * IPI may fail if CPU is offlined, in which case the memory barrier before
+	 * the worker completes will suffice.
+	 */
+	smp_call_function_single(prev_cpu_mutex, cpu_mutex_remote_mb, NULL, 1);
 	WRITE_ONCE(current->cpu_mutex_worker_active, 0);
 	WRITE_ONCE(current->cpu_mutex_need_worker, 0);
 }
@@ -8182,16 +8182,14 @@ static int cpu_mutex_startup(unsigned int cpu)
 
 	/*
 	 * If worker was preempted, we need to preempt the associated task with
-	 * an IPI.
+	 * an IPI. The IPI may fail due to CPU hotplug, in which case the task
+	 * has been preempted since it ran on target_task_cpu.
 	 */
 	target_task_cpu = task_cpu(running_task);
 
 	trace_printk("startup cpu %d preempt task %p\n", cpu, running_task);
 	if (target_task_cpu >= 0) {
-		ret = smp_call_function_single(cpu,
-					       cpu_mutex_preempt_ipi,
-					       NULL, 1);
-		WARN_ON_ONCE(ret);
+		smp_call_function_single(cpu, cpu_mutex_preempt_ipi, NULL, 1);
 		/*
 		 * Order prior userspace memory accesses of remote CPU with
 		 * following local userspace memory accesses.
