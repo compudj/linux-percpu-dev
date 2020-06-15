@@ -8171,8 +8171,8 @@ static int cpu_mutex_startup(unsigned int cpu)
 	printk("startup cpu %d cpumutex %p worker %p\n", cpu, cpum, cpum->worker);
 	/* Bind the still running worker thread back to its rightful cpu. */
 	set_cpus_allowed_ptr(cpum->worker->task, cpumask_of(cpu));
-	//TODO: set worker as preempted and ipi other task
 
+	/* Set worker as preempted and ipi other task. */
 	running_task = READ_ONCE(cpum->running);
 	if (!running_task)
 		return 0;
