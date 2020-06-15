@@ -3254,7 +3254,7 @@ static void cpu_mutex_finish_switch_worker(struct task_struct *prev)
 {
 	struct cpu_mutex *cpum = per_cpu_ptr(&cpu_mutex, smp_processor_id());
 	struct task_struct *running_task;
-	int ret, cpu;
+	int cpu;
 
 	if (!cpum->worker || prev != cpum->worker->task)
 		return;
@@ -3300,7 +3300,7 @@ static void cpu_mutex_remote_mb(void *data)
  */
 static void cpu_mutex_finish_switch_task(struct task_struct *prev, long prev_state)
 {
-	int prev_cpu_mutex, ret;
+	int prev_cpu_mutex;
 
 	prev_cpu_mutex = READ_ONCE(prev->cpu_mutex);
 	if (prev_cpu_mutex < 0 || !READ_ONCE(current->cpu_mutex_need_worker))
@@ -8166,7 +8166,7 @@ static int cpu_mutex_startup(unsigned int cpu)
 {
 	struct cpu_mutex *cpum = per_cpu_ptr(&cpu_mutex, cpu);
 	struct task_struct *running_task;
-	int target_task_cpu, ret;
+	int target_task_cpu;
 
 	printk("startup cpu %d cpumutex %p worker %p\n", cpu, cpum, cpum->worker);
 	/* Bind the still running worker thread back to its rightful cpu. */
