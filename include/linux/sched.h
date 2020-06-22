@@ -684,13 +684,6 @@ struct task_struct {
 	/* Current CPU: */
 	unsigned int			cpu;
 #endif
-#ifdef CONFIG_SCHED_PAIR_CPU
-	int				pair_cpu;
-	struct kthread_work		pair_cpu_work;
-	int				pair_cpu_need_worker;
-	int				pair_cpu_worker_active;
-	int				pair_cpu_queued_work;
-#endif
 	unsigned int			wakee_flips;
 	unsigned long			wakee_flip_decay_ts;
 	struct task_struct		*last_wakee;
@@ -1174,6 +1167,14 @@ struct task_struct {
 	 * with respect to preemption.
 	 */
 	unsigned long rseq_event_mask;
+#endif
+
+#ifdef CONFIG_SCHED_PAIR_CPU
+	int				pair_cpu;
+	struct kthread_work		pair_cpu_work;
+	int				pair_cpu_need_worker;
+	int				pair_cpu_worker_active;
+	int				pair_cpu_queued_work;
 #endif
 
 	struct tlbflush_unmap_batch	tlb_ubc;
@@ -1914,7 +1915,7 @@ extern long sched_getaffinity(pid_t pid, struct cpumask *mask);
 
 static inline void sched_pair_cpu_set_notify_resume(struct task_struct *t)
 {
-	if (current->pair_cpu >= 0)
+	if (t->pair_cpu >= 0)
 		set_tsk_thread_flag(t, TIF_NOTIFY_RESUME);
 }
 
