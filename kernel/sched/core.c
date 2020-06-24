@@ -1742,7 +1742,7 @@ static void pair_cpu_work_func(struct kthread_work *work)
 	 * Order prior userspace memory accesses of local CPU with following
 	 * remote userspace memory accesses.
 	 */
-	smp_store_release(task->pair_cpu_worker_active, 1);
+	smp_store_release(&task->pair_cpu_worker_active, 1);
 	trace_printk("active from cpu %d task %p\n", smp_processor_id(), task);
 	preempt_enable();
 
@@ -1768,7 +1768,7 @@ static void pair_cpu_work_func(struct kthread_work *work)
 	 * "current", and gets kicked away to leave room for other tasks which
 	 * may also need to access that offlined cpu's per-cpu data.
 	 */
-	while (smp_load_acquire(task->pair_cpu_need_worker)
+	while (smp_load_acquire(&task->pair_cpu_need_worker)
 	       && !READ_ONCE(cpum->worker_preempted)
 	       && task->state != TASK_DEAD) {
 		timeout = ktime_sub(ktime_get(), time_begin) > MAX_SCHED_PAIR_CPU_WORK_NS;
@@ -1833,7 +1833,7 @@ void __sched_pair_cpu_handle_notify_resume(struct ksignal *sig,
 	 * Order prior userspace memory accesses of remote CPU with
 	 * following local userspace memory accesses.
 	 */
-	if (smp_load_acquire(current->pair_cpu_worker_active)) {
+	if (smp_load_acquire(&current->pair_cpu_worker_active)) {
 		preempt_enable();
 		trace_printk("notify resume run diff cpu for cpu %d from task %p\n", task_pair_cpu,
 		       current);
@@ -3357,7 +3357,7 @@ static void pair_cpu_finish_switch_task(struct task_struct *prev, long prev_stat
 	 */
 	smp_call_function_single(prev_pair_cpu, pair_cpu_remote_mb, NULL, 1);
 	WRITE_ONCE(prev->pair_cpu_worker_active, 0);
-	smp_store_release(prev->pair_cpu_need_worker, 0);
+	smp_store_release(&prev->pair_cpu_need_worker, 0);
 }
 
 static void pair_cpu_finish_switch(struct task_struct *prev, long prev_state)
@@ -8297,7 +8297,7 @@ void sched_pair_cpu_clear(void)
 		 * Order prior userspace memory accesses of local CPU
 		 * with following remote userspace memory accesses.
 		 */
-		smp_store_release(current->pair_cpu_need_worker, 0);
+		smp_store_release(&current->pair_cpu_need_worker, 0);
 	}
 	if (kthread_cancel_work_sync(&current->pair_cpu_work))
 		put_task_struct(current);
