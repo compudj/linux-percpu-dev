@@ -1841,17 +1841,14 @@ void __sched_pair_cpu_handle_notify_resume(struct ksignal *sig,
 	}
 	preempt_enable();
 
-	if (kthread_cancel_work_sync(&current->pair_cpu_work))
-		put_task_struct(current);
-
 	preempt_disable();
 	set_current_state(TASK_INTERRUPTIBLE);
 	trace_printk("notify resume block for cpu %d from task %p state 0x%lx\n", task_pair_cpu,
 	       current, current->state);
 	WARN_ON_ONCE(current->pair_cpu_worker_active);
 	WRITE_ONCE(current->pair_cpu_need_worker, 1);
-	get_task_struct(current);
-	kthread_queue_work(cpum->worker, &current->pair_cpu_work);
+	if (kthread_queue_work(cpum->worker, &current->pair_cpu_work))
+		get_task_struct(current);
 	preempt_enable();
 	schedule();
 	trace_printk("notify resume unblock for cpu %d from task %p state 0x%lx\n", task_pair_cpu,
