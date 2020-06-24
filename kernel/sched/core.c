@@ -1716,12 +1716,8 @@ EXPORT_SYMBOL_GPL(set_cpus_allowed_ptr);
 static void pair_cpu_preempt_ipi(void *data)
 {
 	trace_printk("pair_cpu_preempt_ipi on cpu %d task %p\n", smp_processor_id(), current);
-	/*
-	 * Order prior userspace memory accesses of local CPU with following
-	 * remote userspace memory accesses.
-	 */
-	smp_mb();
 	set_tsk_need_resched(current);
+	set_preempt_need_resched();
 }
 
 static void pair_cpu_work_func(struct kthread_work *work)
@@ -1737,29 +1733,42 @@ static void pair_cpu_work_func(struct kthread_work *work)
 	cpum = per_cpu_ptr(&pair_cpu, task_pair_cpu);
 
 	preempt_disable();
-	/* Set worker active for task. */
+	/*
+	 * This kernel worker thread is now paired with @task.
+	 */
 	WRITE_ONCE(cpum->worker_preempted, 0);
 	WRITE_ONCE(cpum->running, task);
 	/*
 	 * Order prior userspace memory accesses of local CPU with following
 	 * remote userspace memory accesses.
 	 */
-	smp_mb();
-	WRITE_ONCE(task->pair_cpu_worker_active, 1);
+	smp_store_release(task->pair_cpu_worker_active, 1);
 	trace_printk("active from cpu %d task %p\n", smp_processor_id(), task);
 	preempt_enable();
 
 	trace_printk("wakeup from cpu %d task %p\n", smp_processor_id(), task);
 	/*
-	 * Wake up target task.
+	 * The paired task has queued this kthread work and is blocked awaiting
+	 * for this thread to set "pair_cpu_worker_active" and awaken it.
 	 */
 	wake_up_process(task);
 
 	/*
 	 * Consume CPU time as long as an associated task is running on another
-	 * CPU.
+	 * CPU. The acquire/release semantic of pair_cpu_need_worker orders following
+	 * userspace memory accesses on this CPU after prior remote userspace
+	 * memory accesses.
+	 *
+	 * The timeout is used to handle case where the kernel worker thread is
+	 * handling the per-cpu data of an offline CPU. In that peculiar case,
+	 * the worker thread will be running on a CPU which is not the offline
+	 * CPU, so no preemption will set the "worker_preempted" flag in the
+	 * struct pair_cpu as long as the CPU is offline. The timeout ensures
+	 * that a single worker task does not stay arbitrarily long as
+	 * "current", and gets kicked away to leave room for other tasks which
+	 * may also need to access that offlined cpu's per-cpu data.
 	 */
-	while (READ_ONCE(task->pair_cpu_need_worker)
+	while (smp_load_acquire(task->pair_cpu_need_worker)
 	       && !READ_ONCE(cpum->worker_preempted)
 	       && task->state != TASK_DEAD) {
 		timeout = ktime_sub(ktime_get(), time_begin) > MAX_SCHED_PAIR_CPU_WORK_NS;
@@ -1771,15 +1780,21 @@ static void pair_cpu_work_func(struct kthread_work *work)
 	}
 
 	trace_printk("inactive from cpu %d task %p\n", smp_processor_id(), task);
-	WRITE_ONCE(cpum->running, NULL);
-	WRITE_ONCE(task->pair_cpu_worker_active, 0);
 
 	if (timeout) {
+		WRITE_ONCE(cpum->running, NULL);
+		WRITE_ONCE(task->pair_cpu_worker_active, 0);
+
 		/*
 		 * If worker timed out, we need to preempt the associated task with
 		 * an IPI. The IPI may fail if targetting an offline cpu. This implies
 		 * that a preemption of the target task has happened since it ran on
 		 * that cpu.
+		 *
+		 * The acquire/release semantic of csd lock within
+		 * smp_call_function_single orders prior userspace memory
+		 * accesses of remote CPU with following local userspace memory
+		 * accesses.
 		 */
 		int cpu = task_cpu(task);
 
@@ -1787,12 +1802,6 @@ static void pair_cpu_work_func(struct kthread_work *work)
 		if (cpu >= 0)
 			smp_call_function_single(cpu, pair_cpu_preempt_ipi, NULL, 1);
 	}
-
-	/*
-	 * Order prior userspace memory accesses of remote CPU with following
-	 * local userspace memory accesses.
-	 */
-	smp_mb();
 
 	put_task_struct(task);
 }
@@ -1817,16 +1826,20 @@ void __sched_pair_cpu_handle_notify_resume(struct ksignal *sig,
 		       current);
 		return;
 	}
-	if (READ_ONCE(current->pair_cpu_worker_active)) {
+
+	/*
+	 * This task needs to be paired with a kworker on the paired cpu. Block until
+	 * "pair_cpu_worker_active" is set, or until it is migrated to the paired CPU.
+	 */
+
+	/*
+	 * Order prior userspace memory accesses of remote CPU with
+	 * following local userspace memory accesses.
+	 */
+	if (smp_load_acquire(current->pair_cpu_worker_active)) {
 		preempt_enable();
 		trace_printk("notify resume run diff cpu for cpu %d from task %p\n", task_pair_cpu,
 		       current);
-		/*
-		 *
-		 * Order prior userspace memory accesses of remote CPU with
-		 * following local userspace memory accesses.
-		 */
-		smp_mb();
 		return;
 	}
 	preempt_enable();
@@ -3310,18 +3323,16 @@ static void pair_cpu_finish_switch_worker(struct task_struct *prev)
 	 * an IPI. The IPI may fail if targetting an offline cpu. This implies
 	 * that a preemption of the target task has happened since it ran on
 	 * that cpu.
+	 *
+	 * The acquire/release semantic of csd lock within smp_call_function_single
+	 * orders prior userspace memory accesses of remote CPU with following
+	 * local userspace memory accesses.
 	 */
 	cpu = task_cpu(running_task);
 
 	trace_printk("worker preempted from cpu %d task %p task_cpu %d\n", smp_processor_id(), running_task, cpu);
-	if (cpu >= 0) {
+	if (cpu >= 0)
 		smp_call_function_single(cpu, pair_cpu_preempt_ipi, NULL, 1);
-		/*
-		 * Order prior userspace memory accesses of remote CPU with
-		 * following local userspace memory accesses.
-		 */
-		smp_mb();
-	}
 }
 
 
@@ -3343,21 +3354,18 @@ static void pair_cpu_finish_switch_task(struct task_struct *prev, long prev_stat
 	int prev_pair_cpu;
 
 	prev_pair_cpu = READ_ONCE(prev->pair_cpu);
+
 	if (prev_pair_cpu < 0 || !READ_ONCE(prev->pair_cpu_need_worker)
 	    || !READ_ONCE(prev->pair_cpu_worker_active))
 		return;
 	/*
-	* Order prior userspace memory accesses of local CPU with following
-	* remote userspace memory accesses.
-	*/
-	smp_mb();
-	/*
-	* IPI may fail if CPU is offlined, in which case the memory barrier
-	* before the worker completes will suffice.
-	*/
+	 * IPI may fail if CPU is offlined, in which case the memory barrier
+	 * when acquiring pair_cpu_need_worker orders prior userspace memory
+	 * accesses with following remote userspace memory accessses.
+	 */
 	smp_call_function_single(prev_pair_cpu, pair_cpu_remote_mb, NULL, 1);
 	WRITE_ONCE(prev->pair_cpu_worker_active, 0);
-	WRITE_ONCE(prev->pair_cpu_need_worker, 0);
+	smp_store_release(prev->pair_cpu_need_worker, 0);
 }
 
 static void pair_cpu_finish_switch(struct task_struct *prev, long prev_state)
@@ -8222,18 +8230,16 @@ static int pair_cpu_startup(unsigned int cpu)
 	 * If worker was preempted, we need to preempt the associated task with
 	 * an IPI. The IPI may fail due to CPU hotplug, in which case the task
 	 * has been preempted since it ran on target_task_cpu.
+	 *
+	 * The acquire/release semantic of csd lock within smp_call_function_single
+	 * orders prior userspace memory accesses of remote CPU with following
+	 * local userspace memory accesses.
 	 */
 	target_task_cpu = task_cpu(running_task);
 
 	trace_printk("startup cpu %d preempt task %p\n", cpu, running_task);
-	if (target_task_cpu >= 0) {
+	if (target_task_cpu >= 0)
 		smp_call_function_single(cpu, pair_cpu_preempt_ipi, NULL, 1);
-		/*
-		 * Order prior userspace memory accesses of remote CPU with
-		 * following local userspace memory accesses.
-		 */
-		smp_mb();
-	}
 
 	return 0;
 }
@@ -8298,8 +8304,7 @@ void sched_pair_cpu_clear(void)
 		 * Order prior userspace memory accesses of local CPU
 		 * with following remote userspace memory accesses.
 		 */
-		smp_mb();
-		WRITE_ONCE(current->pair_cpu_need_worker, 0);
+		smp_store_release(current->pair_cpu_need_worker, 0);
 	}
 	if (current->pair_cpu_queued_work) {
 		if (kthread_cancel_work_sync(&current->pair_cpu_work))
