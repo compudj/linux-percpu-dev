@@ -1817,11 +1817,8 @@ void __sched_pair_cpu_handle_notify_resume(struct ksignal *sig,
 	if (task_pair_cpu == smp_processor_id()) {
 		WRITE_ONCE(current->pair_cpu_need_worker, 0);
 		preempt_enable();
-		if (current->pair_cpu_queued_work) {
-			if (kthread_cancel_work_sync(&current->pair_cpu_work))
-				put_task_struct(current);
-			current->pair_cpu_queued_work = 0;
-		}
+		if (kthread_cancel_work_sync(&current->pair_cpu_work))
+			put_task_struct(current);
 		trace_printk("notify resume run same cpu for cpu %d from task %p\n", task_pair_cpu,
 		       current);
 		return;
@@ -1844,11 +1841,8 @@ void __sched_pair_cpu_handle_notify_resume(struct ksignal *sig,
 	}
 	preempt_enable();
 
-	if (current->pair_cpu_queued_work) {
-		if (kthread_cancel_work_sync(&current->pair_cpu_work))
-			put_task_struct(current);
-		current->pair_cpu_queued_work = 0;
-	}
+	if (kthread_cancel_work_sync(&current->pair_cpu_work))
+		put_task_struct(current);
 
 	preempt_disable();
 	set_current_state(TASK_INTERRUPTIBLE);
@@ -1857,9 +1851,7 @@ void __sched_pair_cpu_handle_notify_resume(struct ksignal *sig,
 	WARN_ON_ONCE(current->pair_cpu_worker_active);
 	WRITE_ONCE(current->pair_cpu_need_worker, 1);
 	get_task_struct(current);
-	kthread_init_work(&current->pair_cpu_work, pair_cpu_work_func);
 	kthread_queue_work(cpum->worker, &current->pair_cpu_work);
-	current->pair_cpu_queued_work = 1;
 	preempt_enable();
 	schedule();
 	trace_printk("notify resume unblock for cpu %d from task %p state 0x%lx\n", task_pair_cpu,
@@ -8279,6 +8271,7 @@ static int sched_pair_cpu_set(int cpu)
 	if (READ_ONCE(current->pair_cpu) >= 0)
 		return -EBUSY;
 	trace_printk("set cpu %d from task %p\n", cpu, current);
+	kthread_init_work(&current->pair_cpu_work, pair_cpu_work_func);
 	WRITE_ONCE(current->pair_cpu, cpu);
 	set_tsk_thread_flag(current, TIF_NOTIFY_RESUME);
 	/*
@@ -8306,11 +8299,8 @@ void sched_pair_cpu_clear(void)
 		 */
 		smp_store_release(current->pair_cpu_need_worker, 0);
 	}
-	if (current->pair_cpu_queued_work) {
-		if (kthread_cancel_work_sync(&current->pair_cpu_work))
-			put_task_struct(current);
-		current->pair_cpu_queued_work = 0;
-	}
+	if (kthread_cancel_work_sync(&current->pair_cpu_work))
+		put_task_struct(current);
 	WRITE_ONCE(current->pair_cpu, -1);
 	WARN_ON_ONCE(READ_ONCE(current->pair_cpu_worker_active));
 	return;
