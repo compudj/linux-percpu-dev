@@ -1783,6 +1783,8 @@ static void pair_cpu_work_func(struct kthread_work *work)
 	trace_printk("inactive from cpu %d task %p\n", smp_processor_id(), task);
 
 	if (timeout) {
+		int cpu = task_cpu(task);
+
 		WRITE_ONCE(cpum->running, NULL);
 		WRITE_ONCE(task->pair_cpu_worker_active, 0);
 
@@ -1797,8 +1799,6 @@ static void pair_cpu_work_func(struct kthread_work *work)
 		 * accesses of remote CPU with following local userspace memory
 		 * accesses.
 		 */
-		int cpu = task_cpu(task);
-
 		trace_printk("worker timeout from cpu %d task %p task_cpu %d\n", smp_processor_id(), task, cpu);
 		if (cpu >= 0)
 			smp_call_function_single(cpu, pair_cpu_preempt_ipi, NULL, 1);
@@ -1812,7 +1812,7 @@ static void sched_pair_cpu_work(struct callback_head *work)
 	int task_pair_cpu = READ_ONCE(current->pair_cpu);
 	struct pair_cpu *cpum = per_cpu_ptr(&pair_cpu, task_pair_cpu);
 
-	current->pair_cpu_work->func = NULL;
+	current->pair_cpu_task_work.func = NULL;
 loop:
 	WARN_ON_ONCE(task_pair_cpu < 0);
 	preempt_disable();
@@ -1860,10 +1860,10 @@ loop:
 
 void __sched_pair_cpu_queue_task_work(struct task_struct *t)
 {
-	if (t->pair_cpu_work->func)
+	if (t->pair_cpu_task_work.func)
 		return;	/* Already queued. */
-	init_task_work(&t->pair_cpu_work, sched_pair_cpu_work);
-	task_work_add(t, &t->pair_cpu_work, true);
+	init_task_work(&t->pair_cpu_task_work, sched_pair_cpu_work);
+	task_work_add(t, &t->pair_cpu_task_work, true);
 }
 
 #endif /* CONFIG_SCHED_PAIR_CPU */
