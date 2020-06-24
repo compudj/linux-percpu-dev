@@ -1810,11 +1810,13 @@ static void pair_cpu_work_func(struct kthread_work *work)
 static void sched_pair_cpu_work(struct callback_head *work)
 {
 	int task_pair_cpu = READ_ONCE(current->pair_cpu);
-	struct pair_cpu *cpum = per_cpu_ptr(&pair_cpu, task_pair_cpu);
+	struct pair_cpu *cpum;
 
 	current->pair_cpu_task_work.func = NULL;
+	if (task_pair_cpu < 0)
+		return;
+	cpum = per_cpu_ptr(&pair_cpu, task_pair_cpu);
 loop:
-	WARN_ON_ONCE(task_pair_cpu < 0);
 	preempt_disable();
 	if (task_pair_cpu == smp_processor_id()) {
 		WRITE_ONCE(current->pair_cpu_need_worker, 0);
