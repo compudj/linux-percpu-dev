@@ -38,22 +38,7 @@ EXPORT_TRACEPOINT_SYMBOL_GPL(sched_overutilized_tp);
 DEFINE_PER_CPU_SHARED_ALIGNED(struct rq, runqueues);
 
 #ifdef CONFIG_SCHED_PAIR_CPU
-
-#define MAX_SCHED_PAIR_CPU_WORK_NS	4000000		/* 4 ms */
-
-#define SCHED_PAIR_CPU_CMD_BITMASK	\
-	(SCHED_PAIR_CPU_CMD_SET | SCHED_PAIR_CPU_CMD_CLEAR)
-
-struct pair_cpu {
-	struct kthread_worker *worker;
-	int cpu;				/* protected cpu */
-	int worker_preempted;
-	struct task_struct *running;
-};
-
-static DEFINE_PER_CPU(struct pair_cpu, pair_cpu);
 static enum cpuhp_state pair_cpu_hp_online;
-
 #endif /* CONFIG_SCHED_PAIR_CPU */
 
 #if defined(CONFIG_SCHED_DEBUG) && defined(CONFIG_JUMP_LABEL)
@@ -1731,7 +1716,7 @@ static void pair_cpu_work_func(struct kthread_work *work)
 	bool timeout = false;
 
 	WARN_ON_ONCE(task_pair_cpu < 0);
-	cpum = per_cpu_ptr(&pair_cpu, task_pair_cpu);
+	cpum = &cpu_rq(task_pair_cpu)->pair_cpu;
 
 	preempt_disable();
 	/*
@@ -1816,7 +1801,7 @@ static void sched_pair_cpu_work(struct callback_head *work)
 	WRITE_ONCE(current->pair_cpu_task_work_queued, 0);
 	if (task_pair_cpu < 0)
 		return;
-	cpum = per_cpu_ptr(&pair_cpu, task_pair_cpu);
+	cpum = &cpu_rq(task_pair_cpu)->pair_cpu;
 loop:
 	preempt_disable();
 	if (task_pair_cpu == smp_processor_id()) {
@@ -3310,7 +3295,7 @@ static inline void finish_lock_switch(struct rq *rq)
  */
 static void pair_cpu_finish_switch_worker(struct task_struct *prev)
 {
-	struct pair_cpu *cpum = per_cpu_ptr(&pair_cpu, smp_processor_id());
+	struct pair_cpu *cpum = &this_rq()->pair_cpu;
 	struct task_struct *running_task;
 	int cpu;
 
@@ -8202,7 +8187,7 @@ struct cgroup_subsys cpu_cgrp_subsys = {
 
 static void pair_cpu_spawn_worker(int cpu)
 {
-	struct pair_cpu *cpum = per_cpu_ptr(&pair_cpu, cpu);
+	struct pair_cpu *cpum = &cpu_rq(cpu)->pair_cpu;
 	struct kthread_worker *worker;
 
 	WARN_ON_ONCE(cpum->worker);
@@ -8217,7 +8202,7 @@ static void pair_cpu_spawn_worker(int cpu)
 
 static int pair_cpu_startup(unsigned int cpu)
 {
-	struct pair_cpu *cpum = per_cpu_ptr(&pair_cpu, cpu);
+	struct pair_cpu *cpum = &cpu_rq(cpu)->pair_cpu;
 	struct task_struct *running_task;
 	int target_task_cpu;
 
@@ -8253,7 +8238,7 @@ static int pair_cpu_startup(unsigned int cpu)
 
 static int pair_cpu_teardown(unsigned int cpu)
 {
-	struct pair_cpu *cpum = per_cpu_ptr(&pair_cpu, cpu);
+	struct pair_cpu *cpum = &cpu_rq(cpu)->pair_cpu;
 
 	trace_printk("teardown cpu %d cpumutex %p worker %p\n", cpu, cpum, cpum->worker);
 	/* The worker thread can now be migrated to any online cpu. */

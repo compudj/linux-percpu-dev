@@ -865,6 +865,22 @@ struct uclamp_rq {
 };
 #endif /* CONFIG_UCLAMP_TASK */
 
+#ifdef CONFIG_SCHED_PAIR_CPU
+
+#define MAX_SCHED_PAIR_CPU_WORK_NS	4000000		/* 4 ms */
+
+#define SCHED_PAIR_CPU_CMD_BITMASK	\
+	(SCHED_PAIR_CPU_CMD_SET | SCHED_PAIR_CPU_CMD_CLEAR)
+
+struct pair_cpu {
+	struct kthread_worker *worker;
+	int cpu;				/* protected cpu */
+	int worker_preempted;
+	struct task_struct *running;
+};
+
+#endif /* CONFIG_SCHED_PAIR_CPU */
+
 /*
  * This is the main, per-CPU runqueue data structure.
  *
@@ -1027,6 +1043,9 @@ struct rq {
 #ifdef CONFIG_CPU_IDLE
 	/* Must be inspected within a rcu lock section */
 	struct cpuidle_state	*idle_state;
+#endif
+#ifdef CONFIG_SCHED_PAIR_CPU
+	struct pair_cpu		pair_cpu;
 #endif
 };
 
