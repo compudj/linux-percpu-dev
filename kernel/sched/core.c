@@ -3343,10 +3343,11 @@ static void pair_cpu_finish_switch_worker(struct task_struct *prev)
 
 static void pair_cpu_remote_mb(void *data)
 {
-       /*
-        * Order prior userspace memory accesses of remote CPU with following
-        * local userspace memory accesses.
-        */
+	/*
+	 * Order prior userspace memory accesses of caller CPU with following
+	 * userspace memory accesses on the CPU running this handler. This is
+	 * paired with a memory barrier at the beginning of scheduling.
+         */
        smp_mb();
 }
 
