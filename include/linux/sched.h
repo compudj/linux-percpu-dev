@@ -1932,7 +1932,6 @@ static inline void sched_pair_cpu_fork(struct task_struct *t,
 	t->pair_cpu = -1;
 	t->pair_cpu_need_worker = 0;
 	t->pair_cpu_worker_active = 0;
-	t->pair_cpu_task_work.func = NULL;
 	memset(&t->pair_cpu_work, 0, sizeof(t->pair_cpu_work));
 }
 
