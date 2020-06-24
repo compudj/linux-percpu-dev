@@ -1782,11 +1782,12 @@ static void pair_cpu_work_func(struct kthread_work *work)
 
 	trace_printk("inactive from cpu %d task %p\n", smp_processor_id(), task);
 
+	WRITE_ONCE(cpum->running, NULL);
+	WRITE_ONCE(task->pair_cpu_worker_active, 0);
+
 	if (timeout) {
 		int cpu = task_cpu(task);
 
-		WRITE_ONCE(cpum->running, NULL);
-		WRITE_ONCE(task->pair_cpu_worker_active, 0);
 
 		/*
 		 * If worker timed out, we need to preempt the associated task with
