@@ -1175,6 +1175,7 @@ struct task_struct {
 	struct callback_head		pair_cpu_task_work;
 	int				pair_cpu_need_worker;
 	int				pair_cpu_worker_active;
+	int				pair_cpu_task_work_queued;
 #endif
 
 	struct tlbflush_unmap_batch	tlb_ubc;
@@ -1932,6 +1933,7 @@ static inline void sched_pair_cpu_fork(struct task_struct *t,
 	t->pair_cpu = -1;
 	t->pair_cpu_need_worker = 0;
 	t->pair_cpu_worker_active = 0;
+	t->pair_cpu_task_work_queued = 0;
 	memset(&t->pair_cpu_work, 0, sizeof(t->pair_cpu_work));
 }
 

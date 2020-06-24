@@ -1813,7 +1813,7 @@ static void sched_pair_cpu_work(struct callback_head *work)
 	int task_pair_cpu = READ_ONCE(current->pair_cpu);
 	struct pair_cpu *cpum;
 
-	current->pair_cpu_task_work.func = NULL;
+	WRITE_ONCE(current->pair_cpu_task_work_queued, 0);
 	if (task_pair_cpu < 0)
 		return;
 	cpum = per_cpu_ptr(&pair_cpu, task_pair_cpu);
@@ -1863,8 +1863,10 @@ loop:
 
 void __sched_pair_cpu_queue_task_work(struct task_struct *t)
 {
-	if (t->pair_cpu_task_work.func)
+	if (READ_ONCE(t->pair_cpu_task_work_queued))
 		return;	/* Already queued. */
+	WRITE_ONCE(t->pair_cpu_task_work_queued, 1);
+	barrier();	/* Ensure interrupts observe pair_cpu_task_work_queued = 1. */
 	init_task_work(&t->pair_cpu_task_work, sched_pair_cpu_work);
 	task_work_add(t, &t->pair_cpu_task_work, true);
 }
@@ -3357,7 +3359,6 @@ static void pair_cpu_finish_switch_task(struct task_struct *prev, long prev_stat
 	int prev_pair_cpu;
 
 	prev_pair_cpu = READ_ONCE(prev->pair_cpu);
-
 	if (prev_pair_cpu < 0)
 		return;
 	sched_pair_cpu_queue_task_work(prev);
