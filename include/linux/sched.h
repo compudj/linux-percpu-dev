@@ -1912,27 +1912,15 @@ extern long sched_getaffinity(pid_t pid, struct cpumask *mask);
 
 #ifdef CONFIG_SCHED_PAIR_CPU
 
-static inline void sched_pair_cpu_set_notify_resume(struct task_struct *t)
+extern void __sched_pair_cpu_queue_task_work(struct task_struct *t);
+
+static inline void sched_pair_cpu_queue_task_work(struct task_struct *t)
 {
 	if (t->pair_cpu >= 0)
-		set_tsk_thread_flag(t, TIF_NOTIFY_RESUME);
+		__sched_pair_cpu_queue_task_work(t);
 }
 
-static inline void sched_pair_cpu_preempt(struct task_struct *t)
-{
-	sched_pair_cpu_set_notify_resume(t);
-}
-
-void __sched_pair_cpu_handle_notify_resume(struct ksignal *sig,
-					   struct pt_regs *regs);
 void sched_pair_cpu_clear(void);
-
-static inline void sched_pair_cpu_handle_notify_resume(struct ksignal *ksig,
-						       struct pt_regs *regs)
-{
-	if (current->pair_cpu >= 0)
-		__sched_pair_cpu_handle_notify_resume(ksig, regs);
-}
 
 /*
  * Clear paired cpu on clone.
@@ -1957,14 +1945,7 @@ static inline void sched_pair_cpu_execve(void)
 
 #else
 
-static inline void sched_pair_cpu_set_notify_resume(struct task_struct *t)
-{
-}
-static inline void sched_pair_cpu_preempt(struct task_struct *t)
-{
-}
-static inline void sched_pair_cpu_handle_notify_resume(struct ksignal *ksig,
-						       struct pt_regs *regs)
+static inline void sched_pair_cpu_queue_task_work(struct task_struct *t)
 {
 }
 static inline void sched_pair_cpu_fork(struct task_struct *t,

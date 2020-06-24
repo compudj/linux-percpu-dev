@@ -1718,7 +1718,7 @@ static void pair_cpu_preempt_ipi(void *data)
 	trace_printk("pair_cpu_preempt_ipi on cpu %d task %p\n", smp_processor_id(), current);
 	set_tsk_need_resched(current);
 	set_preempt_need_resched();
-	sched_pair_cpu_preempt(current);
+	sched_pair_cpu_queue_task_work(current);
 }
 
 static void pair_cpu_work_func(struct kthread_work *work)
@@ -1807,12 +1807,13 @@ static void pair_cpu_work_func(struct kthread_work *work)
 	put_task_struct(task);
 }
 
-void __sched_pair_cpu_handle_notify_resume(struct ksignal *sig,
-					   struct pt_regs *regs)
+static void sched_pair_cpu_work(struct callback_head *work)
 {
 	int task_pair_cpu = READ_ONCE(current->pair_cpu);
 	struct pair_cpu *cpum = per_cpu_ptr(&pair_cpu, task_pair_cpu);
 
+	current->pair_cpu_work->func = NULL;
+loop:
 	WARN_ON_ONCE(task_pair_cpu < 0);
 	preempt_disable();
 	if (task_pair_cpu == smp_processor_id()) {
@@ -1851,11 +1852,18 @@ void __sched_pair_cpu_handle_notify_resume(struct ksignal *sig,
 	if (kthread_queue_work(cpum->worker, &current->pair_cpu_work))
 		get_task_struct(current);
 	preempt_enable();
-	/* Ensure this resume notifier is called again before going back to userspace. */
-	sched_pair_cpu_preempt(current);
 	schedule();
 	trace_printk("notify resume unblock for cpu %d from task %p state 0x%lx\n", task_pair_cpu,
 	       current, current->state);
+	goto loop;
+}
+
+void __sched_pair_cpu_queue_task_work(struct task_struct *t)
+{
+	if (t->pair_cpu_work->func)
+		return;	/* Already queued. */
+	init_task_work(&t->pair_cpu_work, sched_pair_cpu_work);
+	task_work_add(t, &t->pair_cpu_work, true);
 }
 
 #endif /* CONFIG_SCHED_PAIR_CPU */
@@ -3349,7 +3357,7 @@ static void pair_cpu_finish_switch_task(struct task_struct *prev, long prev_stat
 
 	if (prev_pair_cpu < 0)
 		return;
-	sched_pair_cpu_preempt(prev);
+	sched_pair_cpu_queue_task_work(prev);
 	if (!READ_ONCE(prev->pair_cpu_need_worker)
 	    || !READ_ONCE(prev->pair_cpu_worker_active))
 		return;
@@ -8275,7 +8283,7 @@ static int sched_pair_cpu_set(int cpu)
 	trace_printk("set cpu %d from task %p\n", cpu, current);
 	kthread_init_work(&current->pair_cpu_work, pair_cpu_work_func);
 	WRITE_ONCE(current->pair_cpu, cpu);
-	set_tsk_thread_flag(current, TIF_NOTIFY_RESUME);
+	sched_pair_cpu_queue_task_work(current);
 	/*
 	 * From this point onwards, our user-space can only run if the target
 	 * cpu's worker thread is also running, except if the target cpu is
