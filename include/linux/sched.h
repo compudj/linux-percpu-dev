@@ -1173,6 +1173,7 @@ struct task_struct {
 	int				pair_cpu;
 	struct kthread_work		pair_cpu_work;
 	struct callback_head		pair_cpu_task_work;
+	wait_queue_head_t		pair_cpu_wait;
 	int				pair_cpu_need_worker;
 	int				pair_cpu_worker_active;
 	int				pair_cpu_task_work_queued;

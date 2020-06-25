@@ -1736,7 +1736,7 @@ static void pair_cpu_work_func(struct kthread_work *work)
 	 * The paired task has queued this kthread work and is blocked awaiting
 	 * for this thread to set "pair_cpu_worker_active" and awaken it.
 	 */
-	wake_up_process(task);
+	wake_up(&task->pair_cpu_wait);
 
 	/*
 	 * Consume CPU time as long as an associated task is running on another
@@ -1790,6 +1790,26 @@ static void pair_cpu_work_func(struct kthread_work *work)
 	put_task_struct(task);
 }
 
+static bool sched_pair_cpu_work_condition(struct pair_cpu *cpum)
+{
+	/*
+	 * Order prior userspace memory accesses of remote CPU with
+	 * following local userspace memory accesses.
+	 *
+	 * We wait until the worker is active or our task does not
+	 * need the worker anymore due to preemption.
+	 */
+	return smp_load_acquire(&current->pair_cpu_worker_active)
+	       || !READ_ONCE(current->pair_cpu_need_worker);
+}
+
+static void sched_pair_cpu_work_before_sleep(struct pair_cpu *cpum)
+{
+	WRITE_ONCE(current->pair_cpu_need_worker, 1);
+	if (kthread_queue_work(cpum->worker, &current->pair_cpu_work))
+		get_task_struct(current);
+}
+
 static void sched_pair_cpu_work(struct callback_head *work)
 {
 	int task_pair_cpu = READ_ONCE(current->pair_cpu);
@@ -1799,11 +1819,13 @@ static void sched_pair_cpu_work(struct callback_head *work)
 	if (task_pair_cpu < 0)
 		return;
 	cpum = &cpu_rq(task_pair_cpu)->pair_cpu;
-loop:
-	preempt_disable();
-	if (task_pair_cpu == smp_processor_id()) {
+	/*
+	 * If preempted and migrated within sched_pair_cpu_work, finish task
+	 * switch will ensure that this task work is executed again before
+	 * going back to userspace.
+	 */
+	if (task_pair_cpu == raw_smp_processor_id()) {
 		WRITE_ONCE(current->pair_cpu_need_worker, 0);
-		preempt_enable();
 		if (kthread_cancel_work_sync(&current->pair_cpu_work))
 			put_task_struct(current);
 		trace_printk("notify resume run same cpu for cpu %d from task %p\n", task_pair_cpu,
@@ -1811,35 +1833,12 @@ loop:
 		return;
 	}
 
-	/*
-	 * This task needs to be paired with a kworker on the paired cpu. Block until
-	 * "pair_cpu_worker_active" is set, or until it is migrated to the paired CPU.
-	 */
-
-	/*
-	 * Order prior userspace memory accesses of remote CPU with
-	 * following local userspace memory accesses.
-	 */
-	if (smp_load_acquire(&current->pair_cpu_worker_active)) {
-		preempt_enable();
-		trace_printk("notify resume run diff cpu for cpu %d from task %p\n", task_pair_cpu,
-		       current);
-		return;
-	}
-	preempt_enable();
-
-	preempt_disable();
-	set_current_state(TASK_INTERRUPTIBLE);
 	trace_printk("notify resume block for cpu %d from task %p state 0x%lx\n", task_pair_cpu,
 	       current, current->state);
-	WRITE_ONCE(current->pair_cpu_need_worker, 1);
-	if (kthread_queue_work(cpum->worker, &current->pair_cpu_work))
-		get_task_struct(current);
-	preempt_enable();
-	schedule();
+	wait_event_cmd(current->pair_cpu_wait, sched_pair_cpu_work_condition(cpum),
+		sched_pair_cpu_work_before_sleep(cpum), /* nothing. */);
 	trace_printk("notify resume unblock for cpu %d from task %p state 0x%lx\n", task_pair_cpu,
 	       current, current->state);
-	goto loop;
 }
 
 void __sched_pair_cpu_queue_task_work(struct task_struct *t)
@@ -8261,6 +8260,7 @@ static int sched_pair_cpu_set(int cpu)
 	if (READ_ONCE(current->pair_cpu) >= 0)
 		return -EBUSY;
 	trace_printk("set cpu %d from task %p\n", cpu, current);
+	init_waitqueue_head(&current->pair_cpu_wait);
 	kthread_init_work(&current->pair_cpu_work, pair_cpu_work_func);
 	WRITE_ONCE(current->pair_cpu, cpu);
 	sched_pair_cpu_queue_task_work(current);
