@@ -3350,7 +3350,7 @@ static void pair_cpu_sched_out_task(struct preempt_notifier *notifier, struct ta
 	/*
 	 * IPI may fail if CPU is offlined, in which case the memory barrier
 	 * when acquiring pair_cpu_need_worker orders prior userspace memory
-	 * accesses with following remote userspace memory accessses.
+	 * accesses with following remote userspace memory accesses.
 	 */
 	smp_call_function_single(task_pair_cpu, pair_cpu_remote_mb, NULL, 1);
 	WRITE_ONCE(task->pair_cpu_worker_active, 0);
