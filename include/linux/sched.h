@@ -1174,6 +1174,7 @@ struct task_struct {
 	struct kthread_work		pair_cpu_work;
 	struct callback_head		pair_cpu_task_work;
 	wait_queue_head_t		pair_cpu_wait;
+	struct preempt_notifier		pair_cpu_preempt_notifier;
 	int				pair_cpu_need_worker;
 	int				pair_cpu_worker_active;
 	int				pair_cpu_task_work_queued;

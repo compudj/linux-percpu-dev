@@ -3289,13 +3289,15 @@ static inline void finish_lock_switch(struct rq *rq)
  *
  * This only targets pair_cpu worker for online cpus.
  */
-static void pair_cpu_finish_switch_worker(struct task_struct *prev)
+static void pair_cpu_sched_out_worker(struct preempt_notifier *notifier, struct task_struct *next)
 {
+	struct task_struct *task = container_of(notifier, struct task_struct,
+						pair_cpu_preempt_notifier);
 	struct pair_cpu *cpum = &this_rq()->pair_cpu;
 	struct task_struct *running_task;
 	int cpu;
 
-	if (!cpum->worker || prev != cpum->worker->task)
+	if (!cpum->worker || task != cpum->worker->task)
 		return;
 	running_task = READ_ONCE(cpum->running);
 	if (!running_task)
@@ -3318,7 +3320,6 @@ static void pair_cpu_finish_switch_worker(struct task_struct *prev)
 	smp_call_function_single(cpu, pair_cpu_preempt_ipi, NULL, 1);
 }
 
-
 static void pair_cpu_remote_mb(void *data)
 {
 	/*
@@ -3333,38 +3334,42 @@ static void pair_cpu_remote_mb(void *data)
  * If we preempt a task currently associated with a cpu mutex worker,
  * we need to tell the worker to stop using cpu time.
  */
-static void pair_cpu_finish_switch_task(struct task_struct *prev, long prev_state)
+static void pair_cpu_sched_out_task(struct preempt_notifier *notifier, struct task_struct *next)
 {
-	int prev_pair_cpu;
+	struct task_struct *task = container_of(notifier, struct task_struct,
+						pair_cpu_preempt_notifier);
+	int task_pair_cpu;
 
-	prev_pair_cpu = READ_ONCE(prev->pair_cpu);
-	if (prev_pair_cpu < 0)
+	task_pair_cpu = READ_ONCE(task->pair_cpu);
+	if (task_pair_cpu < 0)
 		return;
-	sched_pair_cpu_queue_task_work(prev);
-	if (!READ_ONCE(prev->pair_cpu_need_worker)
-	    || !READ_ONCE(prev->pair_cpu_worker_active))
+	sched_pair_cpu_queue_task_work(task);
+	if (!READ_ONCE(task->pair_cpu_need_worker)
+	    || !READ_ONCE(task->pair_cpu_worker_active))
 		return;
 	/*
 	 * IPI may fail if CPU is offlined, in which case the memory barrier
 	 * when acquiring pair_cpu_need_worker orders prior userspace memory
 	 * accesses with following remote userspace memory accessses.
 	 */
-	smp_call_function_single(prev_pair_cpu, pair_cpu_remote_mb, NULL, 1);
-	WRITE_ONCE(prev->pair_cpu_worker_active, 0);
-	smp_store_release(&prev->pair_cpu_need_worker, 0);
+	smp_call_function_single(task_pair_cpu, pair_cpu_remote_mb, NULL, 1);
+	WRITE_ONCE(task->pair_cpu_worker_active, 0);
+	smp_store_release(&task->pair_cpu_need_worker, 0);
 }
 
-static void pair_cpu_finish_switch(struct task_struct *prev, long prev_state)
-{
-	pair_cpu_finish_switch_worker(prev);
-	pair_cpu_finish_switch_task(prev, prev_state);
-}
-
-#else /* CONFIG_SCHED_PAIR_CPU */
-
-static void pair_cpu_finish_switch(struct task_struct *prev, long prev_state)
+static void pair_cpu_sched_in(struct preempt_notifier *notifier, int cpu)
 {
 }
+
+static struct preempt_ops pair_cpu_task_preempt_ops = {
+	.sched_in = pair_cpu_sched_in,
+	.sched_out = pair_cpu_sched_out_task,
+};
+
+static struct preempt_ops pair_cpu_worker_preempt_ops = {
+	.sched_in = pair_cpu_sched_in,
+	.sched_out = pair_cpu_sched_out_worker,
+};
 
 #endif /* CONFIG_SCHED_PAIR_CPU */
 
@@ -3456,7 +3461,6 @@ static struct rq *finish_task_switch(struct task_struct *prev)
 	finish_lock_switch(rq);
 	finish_arch_post_lock_switch();
 	kcov_finish_switch(current);
-	pair_cpu_finish_switch(prev, prev_state);
 
 	fire_sched_in_preempt_notifiers(current);
 	/*
@@ -8178,10 +8182,19 @@ struct cgroup_subsys cpu_cgrp_subsys = {
 
 #ifdef CONFIG_SCHED_PAIR_CPU
 
+/* Register preempt notifier for worker thread. */
+static void init_pair_cpu_worker(struct kthread_work *work)
+{
+	preempt_notifier_init(&current->pair_cpu_preempt_notifier,
+			      &pair_cpu_worker_preempt_ops);
+	preempt_notifier_register(&current->pair_cpu_preempt_notifier);
+}
+
 static void pair_cpu_spawn_worker(int cpu)
 {
 	struct pair_cpu *cpum = &cpu_rq(cpu)->pair_cpu;
 	struct kthread_worker *worker;
+	DEFINE_KTHREAD_WORK(init_work, init_pair_cpu_worker);
 
 	WARN_ON_ONCE(cpum->worker);
 	worker = kthread_create_worker_on_cpu(cpu, 0, "pair_cpu/%d", cpu);
@@ -8191,6 +8204,9 @@ static void pair_cpu_spawn_worker(int cpu)
 	}
 	cpum->worker = worker;
 	cpum->cpu = cpu;
+
+	kthread_queue_work(worker, &init_work);
+	kthread_flush_work(&init_work);
 }
 
 static int pair_cpu_startup(unsigned int cpu)
@@ -8263,6 +8279,9 @@ static int sched_pair_cpu_set(int cpu)
 	trace_printk("set cpu %d from task %p\n", cpu, current);
 	init_waitqueue_head(&current->pair_cpu_wait);
 	kthread_init_work(&current->pair_cpu_work, pair_cpu_work_func);
+	preempt_notifier_init(&current->pair_cpu_preempt_notifier,
+			      &pair_cpu_task_preempt_ops);
+	preempt_notifier_register(&current->pair_cpu_preempt_notifier);
 	WRITE_ONCE(current->pair_cpu, cpu);
 	sched_pair_cpu_queue_task_work(current);
 	/*
@@ -8293,6 +8312,7 @@ void sched_pair_cpu_clear(void)
 	if (kthread_cancel_work_sync(&current->pair_cpu_work))
 		put_task_struct(current);
 	WRITE_ONCE(current->pair_cpu, -1);
+	preempt_notifier_unregister(&current->pair_cpu_preempt_notifier);
 	WARN_ON_ONCE(READ_ONCE(current->pair_cpu_worker_active));
 	return;
 }
