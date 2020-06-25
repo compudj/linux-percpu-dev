@@ -1805,7 +1805,6 @@ static bool sched_pair_cpu_work_condition(struct pair_cpu *cpum)
 
 static void sched_pair_cpu_work_before_sleep(struct pair_cpu *cpum)
 {
-	WRITE_ONCE(current->pair_cpu_need_worker, 1);
 	if (kthread_queue_work(cpum->worker, &current->pair_cpu_work))
 		get_task_struct(current);
 }
@@ -1832,6 +1831,8 @@ static void sched_pair_cpu_work(struct callback_head *work)
 		       current);
 		return;
 	}
+
+	WRITE_ONCE(current->pair_cpu_need_worker, 1);
 
 	trace_printk("notify resume block for cpu %d from task %p state 0x%lx\n", task_pair_cpu,
 	       current, current->state);
