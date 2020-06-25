@@ -1722,7 +1722,6 @@ static void pair_cpu_work_func(struct kthread_work *work)
 	/*
 	 * This kernel worker thread is now paired with @task.
 	 */
-	WRITE_ONCE(cpum->worker_preempted, 0);
 	WRITE_ONCE(cpum->running, task);
 	/*
 	 * Order prior userspace memory accesses of local CPU with following
@@ -1748,14 +1747,13 @@ static void pair_cpu_work_func(struct kthread_work *work)
 	 * The timeout is used to handle case where the kernel worker thread is
 	 * handling the per-cpu data of an offline CPU. In that peculiar case,
 	 * the worker thread will be running on a CPU which is not the offline
-	 * CPU, so no preemption will set the "worker_preempted" flag in the
-	 * struct pair_cpu as long as the CPU is offline. The timeout ensures
-	 * that a single worker task does not stay arbitrarily long as
-	 * "current", and gets kicked away to leave room for other tasks which
-	 * may also need to access that offlined cpu's per-cpu data.
+	 * CPU, so no preemption affects that worker thread's pair_cpu data as
+	 * long as the CPU is offline. The timeout ensures that a single worker
+	 * task does not stay arbitrarily long as "current", and gets kicked
+	 * away to leave room for other tasks which may also need to access
+	 * that offlined cpu's per-cpu data.
 	 */
 	while (smp_load_acquire(&task->pair_cpu_need_worker)
-	       && !READ_ONCE(cpum->worker_preempted)
 	       && task->state != TASK_DEAD) {
 		timeout = ktime_sub(ktime_get(), time_begin) > MAX_SCHED_PAIR_CPU_WORK_NS;
 		if (timeout)
@@ -3304,7 +3302,6 @@ static void pair_cpu_finish_switch_worker(struct task_struct *prev)
 	running_task = READ_ONCE(cpum->running);
 	if (!running_task)
 		return;
-	WRITE_ONCE(cpum->worker_preempted, 1);
 	WRITE_ONCE(running_task->pair_cpu_worker_active, 0);
 	WRITE_ONCE(cpum->running, NULL);
 
@@ -8214,7 +8211,6 @@ static int pair_cpu_startup(unsigned int cpu)
 	running_task = READ_ONCE(cpum->running);
 	if (!running_task)
 		return 0;
-	WRITE_ONCE(cpum->worker_preempted, 1);
 	WRITE_ONCE(running_task->pair_cpu_worker_active, 0);
 	WRITE_ONCE(cpum->running, NULL);
 
