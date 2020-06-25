@@ -8256,6 +8256,8 @@ static void __init pair_cpu_spawn_workers(void)
 {
 	int ret, cpu;
 
+	/* Enable preempt notifiers for worker threads and paired tasks. */
+	preempt_notifier_inc();
 	cpus_read_lock();
 	for_each_possible_cpu(cpu)
 		pair_cpu_spawn_worker(cpu);
