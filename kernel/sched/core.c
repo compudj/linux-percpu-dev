@@ -1833,7 +1833,6 @@ loop:
 	set_current_state(TASK_INTERRUPTIBLE);
 	trace_printk("notify resume block for cpu %d from task %p state 0x%lx\n", task_pair_cpu,
 	       current, current->state);
-	WARN_ON_ONCE(current->pair_cpu_worker_active);
 	WRITE_ONCE(current->pair_cpu_need_worker, 1);
 	if (kthread_queue_work(cpum->worker, &current->pair_cpu_work))
 		get_task_struct(current);
