@@ -1784,8 +1784,7 @@ static void pair_cpu_work_func(struct kthread_work *work)
 		 * accesses.
 		 */
 		trace_printk("worker timeout from cpu %d task %p task_cpu %d\n", smp_processor_id(), task, cpu);
-		if (cpu >= 0)
-			smp_call_function_single(cpu, pair_cpu_preempt_ipi, NULL, 1);
+		smp_call_function_single(cpu, pair_cpu_preempt_ipi, NULL, 1);
 	}
 
 	put_task_struct(task);
@@ -3315,10 +3314,8 @@ static void pair_cpu_finish_switch_worker(struct task_struct *prev)
 	 * local userspace memory accesses.
 	 */
 	cpu = task_cpu(running_task);
-
 	trace_printk("worker preempted from cpu %d task %p task_cpu %d\n", smp_processor_id(), running_task, cpu);
-	if (cpu >= 0)
-		smp_call_function_single(cpu, pair_cpu_preempt_ipi, NULL, 1);
+	smp_call_function_single(cpu, pair_cpu_preempt_ipi, NULL, 1);
 }
 
 
@@ -8223,10 +8220,8 @@ static int pair_cpu_startup(unsigned int cpu)
 	 * local userspace memory accesses.
 	 */
 	target_task_cpu = task_cpu(running_task);
-
-	trace_printk("startup cpu %d preempt task %p\n", cpu, running_task);
-	if (target_task_cpu >= 0)
-		smp_call_function_single(cpu, pair_cpu_preempt_ipi, NULL, 1);
+	trace_printk("startup cpu %d preempt task %p on cpu %d\n", cpu, running_task, target_task_cpu);
+	smp_call_function_single(target_task_cpu, pair_cpu_preempt_ipi, NULL, 1);
 
 	return 0;
 }
