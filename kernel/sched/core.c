@@ -1767,16 +1767,14 @@ static void pair_cpu_work_func(struct kthread_work *work)
 		 * If worker timed out, we need to preempt the associated task with
 		 * an IPI.
 		 *
-		 * The memory barrier at beginning of scheduler and the memory barrier
-		 * in put_task_struct order prior userspace memory accesses of
-		 * the paired task with following local userspace memory
-		 * accesses.
-		 * TODO: confirm that raising the reschedule IPI is sufficient
-		 * to provide memory ordering guarantees.
+		 * The release/acquire of on_cpu orders prior userspace memory
+		 * accesses of the paired task with following local userspace
+		 * memory accesses.
 		 */
 		trace_printk("worker timeout from cpu %d task %p task_cpu %d\n", smp_processor_id(), task, cpu);
 		sched_pair_cpu_queue_task_work(task);
 		kick_process(task);
+		smp_cond_load_acquire(&task->on_cpu, !VAL);
 	}
 
 	put_task_struct(task);
@@ -3301,17 +3299,15 @@ static void pair_cpu_sched_out_worker(struct preempt_notifier *notifier, struct 
 	 * If worker was preempted, we need to preempt the associated task with
 	 * an IPI.
 	 *
-	 * The memory barriers at beginning/end of scheduler order prior
-	 * userspace memory accesses of the paired task with following local
-	 * userspace memory accesses.
-	 *
-	 * TODO: confirm that raising the reschedule IPI is sufficient
-	 * to provide memory ordering guarantees.
+	 * The release/acquire of on_cpu orders prior userspace memory
+	 * accesses of the paired task with following local userspace
+	 * memory accesses.
 	 */
 	cpu = task_cpu(running_task);
 	trace_printk("worker preempted from cpu %d task %p task_cpu %d\n", smp_processor_id(), running_task, cpu);
 	sched_pair_cpu_queue_task_work(running_task);
 	kick_process(running_task);
+	smp_cond_load_acquire(&running_task->on_cpu, !VAL);
 }
 
 /*
@@ -8208,18 +8204,15 @@ static int pair_cpu_startup(unsigned int cpu)
 	 * If worker was preempted, we need to preempt the associated task with
 	 * an IPI.
 	 *
-	 * The memory barriers at beginning/end of scheduler order prior
-	 * userspace memory accesses of the paired task with following local
-	 * userspace memory accesses.
-	 *
-	 * TODO: confirm that raising the reschedule IPI is sufficient
-	 * to provide memory ordering guarantees.
+	 * The release/acquire of on_cpu orders prior userspace memory
+	 * accesses of the paired task with following local userspace
+	 * memory accesses.
 	 */
 	target_task_cpu = task_cpu(running_task);
 	trace_printk("startup cpu %d preempt task %p on cpu %d\n", cpu, running_task, target_task_cpu);
 	sched_pair_cpu_queue_task_work(running_task);
 	kick_process(running_task);
-
+	smp_cond_load_acquire(&running_task->on_cpu, !VAL);
 	return 0;
 }
 
