@@ -1178,6 +1178,7 @@ struct task_struct {
 	int				pair_cpu_need_worker;
 	int				pair_cpu_worker_active;
 	int				pair_cpu_task_work_queued;
+	struct task_struct *		pair_task_on_cpu_wait;
 #endif
 
 	struct tlbflush_unmap_batch	tlb_ubc;

@@ -3307,7 +3307,8 @@ static void pair_cpu_sched_out_worker(struct preempt_notifier *notifier, struct 
 	trace_printk("worker preempted from cpu %d task %p task_cpu %d\n", smp_processor_id(), running_task, cpu);
 	sched_pair_cpu_queue_task_work(running_task);
 	kick_process(running_task);
-	smp_cond_load_acquire(&running_task->on_cpu, !VAL);
+	//smp_cond_load_acquire(&running_task->on_cpu, !VAL);
+	next->pair_task_on_cpu_wait = running_task;
 }
 
 /*
@@ -3435,6 +3436,11 @@ static struct rq *finish_task_switch(struct task_struct *prev)
 	finish_lock_switch(rq);
 	finish_arch_post_lock_switch();
 	kcov_finish_switch(current);
+
+	if (current->pair_task_on_cpu_wait) {
+		smp_cond_load_acquire(&current->pair_task_on_cpu_wait->on_cpu, !VAL);
+		current->pair_task_on_cpu_wait = NULL;
+	}
 
 	fire_sched_in_preempt_notifiers(current);
 	/*
