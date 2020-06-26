@@ -3320,16 +3320,6 @@ static void pair_cpu_sched_out_worker(struct preempt_notifier *notifier, struct 
 	smp_call_function_single(cpu, pair_cpu_preempt_ipi, NULL, 1);
 }
 
-static void pair_cpu_remote_mb(void *data)
-{
-	/*
-	 * Order prior userspace memory accesses of caller CPU with following
-	 * userspace memory accesses on the CPU running this handler. This is
-	 * paired with a memory barrier at the beginning of scheduling.
-         */
-       smp_mb();
-}
-
 /*
  * If we preempt a task currently associated with a cpu mutex worker,
  * we need to tell the worker to stop using cpu time.
@@ -3347,12 +3337,6 @@ static void pair_cpu_sched_out_task(struct preempt_notifier *notifier, struct ta
 	if (!READ_ONCE(task->pair_cpu_need_worker)
 	    || !READ_ONCE(task->pair_cpu_worker_active))
 		return;
-	/*
-	 * IPI may fail if CPU is offlined, in which case the memory barrier
-	 * when acquiring pair_cpu_need_worker orders prior userspace memory
-	 * accesses with following remote userspace memory accesses.
-	 */
-	smp_call_function_single(task_pair_cpu, pair_cpu_remote_mb, NULL, 1);
 	WRITE_ONCE(task->pair_cpu_worker_active, 0);
 	smp_store_release(&task->pair_cpu_need_worker, 0);
 }
