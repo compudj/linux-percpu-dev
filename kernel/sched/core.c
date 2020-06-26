@@ -1698,6 +1698,14 @@ EXPORT_SYMBOL_GPL(set_cpus_allowed_ptr);
 
 #ifdef CONFIG_SCHED_PAIR_CPU
 
+static void pair_cpu_preempt_ipi(void *data)
+{
+	trace_printk("pair_cpu_preempt_ipi on cpu %d task %p\n", smp_processor_id(), current);
+	set_tsk_need_resched(current);
+	set_preempt_need_resched();
+	sched_pair_cpu_queue_task_work(current);
+}
+
 static void pair_cpu_work_func(struct kthread_work *work)
 {
 	struct task_struct *task = container_of(work, struct task_struct,
@@ -1763,20 +1771,20 @@ static void pair_cpu_work_func(struct kthread_work *work)
 	if (timeout) {
 		int cpu = task_cpu(task);
 
+
 		/*
 		 * If worker timed out, we need to preempt the associated task with
-		 * an IPI.
+		 * an IPI. The IPI may fail if targetting an offline cpu. This implies
+		 * that a preemption of the target task has happened since it ran on
+		 * that cpu.
 		 *
-		 * The memory barrier at beginning of scheduler and the memory barrier
-		 * in put_task_struct order prior userspace memory accesses of
-		 * the paired task with following local userspace memory
+		 * The acquire/release semantic of csd lock within
+		 * smp_call_function_single orders prior userspace memory
+		 * accesses of remote CPU with following local userspace memory
 		 * accesses.
-		 * TODO: confirm that raising the reschedule IPI is sufficient
-		 * to provide memory ordering guarantees.
 		 */
 		trace_printk("worker timeout from cpu %d task %p task_cpu %d\n", smp_processor_id(), task, cpu);
-		sched_pair_cpu_queue_task_work(task);
-		kick_process(task);
+		smp_call_function_single(cpu, pair_cpu_preempt_ipi, NULL, 1);
 	}
 
 	put_task_struct(task);
@@ -3299,19 +3307,17 @@ static void pair_cpu_sched_out_worker(struct preempt_notifier *notifier, struct 
 
 	/*
 	 * If worker was preempted, we need to preempt the associated task with
-	 * an IPI.
+	 * an IPI. The IPI may fail if targetting an offline cpu. This implies
+	 * that a preemption of the target task has happened since it ran on
+	 * that cpu.
 	 *
-	 * The memory barriers at beginning/end of scheduler order prior
-	 * userspace memory accesses of the paired task with following local
-	 * userspace memory accesses.
-	 *
-	 * TODO: confirm that raising the reschedule IPI is sufficient
-	 * to provide memory ordering guarantees.
+	 * The acquire/release semantic of csd lock within smp_call_function_single
+	 * orders prior userspace memory accesses of remote CPU with following
+	 * local userspace memory accesses.
 	 */
 	cpu = task_cpu(running_task);
 	trace_printk("worker preempted from cpu %d task %p task_cpu %d\n", smp_processor_id(), running_task, cpu);
-	sched_pair_cpu_queue_task_work(running_task);
-	kick_process(running_task);
+	smp_call_function_single(cpu, pair_cpu_preempt_ipi, NULL, 1);
 }
 
 /*
@@ -8206,19 +8212,16 @@ static int pair_cpu_startup(unsigned int cpu)
 
 	/*
 	 * If worker was preempted, we need to preempt the associated task with
-	 * an IPI.
+	 * an IPI. The IPI may fail due to CPU hotplug, in which case the task
+	 * has been preempted since it ran on target_task_cpu.
 	 *
-	 * The memory barriers at beginning/end of scheduler order prior
-	 * userspace memory accesses of the paired task with following local
-	 * userspace memory accesses.
-	 *
-	 * TODO: confirm that raising the reschedule IPI is sufficient
-	 * to provide memory ordering guarantees.
+	 * The acquire/release semantic of csd lock within smp_call_function_single
+	 * orders prior userspace memory accesses of remote CPU with following
+	 * local userspace memory accesses.
 	 */
 	target_task_cpu = task_cpu(running_task);
 	trace_printk("startup cpu %d preempt task %p on cpu %d\n", cpu, running_task, target_task_cpu);
-	sched_pair_cpu_queue_task_work(running_task);
-	kick_process(running_task);
+	smp_call_function_single(target_task_cpu, pair_cpu_preempt_ipi, NULL, 1);
 
 	return 0;
 }
