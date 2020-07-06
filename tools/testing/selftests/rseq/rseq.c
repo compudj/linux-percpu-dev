@@ -73,6 +73,11 @@ static int sys_rseq(volatile struct rseq *rseq_abi, uint32_t rseq_len,
 	return syscall(__NR_rseq, rseq_abi, rseq_len, flags, sig);
 }
 
+static bool rseq_reliable_cpu_id(void)
+{
+	return sys_rseq(NULL, 0, RSEQ_FLAG_RELIABLE_CPU_ID, 0) == 0;
+}
+
 int rseq_register_current_thread(void)
 {
 	int rc, ret = 0;
@@ -87,7 +92,8 @@ int rseq_register_current_thread(void)
 	}
 	if (__rseq_refcount++)
 		goto end;
-	rc = sys_rseq(&__rseq_abi, sizeof(struct rseq), 0, RSEQ_SIG);
+	rc = sys_rseq(&__rseq_abi, sizeof(struct rseq),
+		      RSEQ_FLAG_REGISTER | RSEQ_FLAG_RELIABLE_CPU_ID, RSEQ_SIG);
 	if (!rc) {
 		assert(rseq_current_cpu_raw() >= 0);
 		goto end;
@@ -96,6 +102,8 @@ int rseq_register_current_thread(void)
 		__rseq_abi.cpu_id = RSEQ_CPU_ID_REGISTRATION_FAILED;
 	ret = -1;
 	__rseq_refcount--;
+	if (errno == EINVAL && !rseq_reliable_cpu_id())
+		fprintf(stderr, "Error: rseq does not provide a reliable cpu_id field.\n");
 end:
 	signal_restore(oldset);
 	return ret;
