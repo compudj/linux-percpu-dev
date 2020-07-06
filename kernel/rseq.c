@@ -309,9 +309,16 @@ SYSCALL_DEFINE4(rseq, struct rseq __user *, rseq, u32, rseq_len,
 {
 	int ret;
 
-	if (flags & RSEQ_FLAG_UNREGISTER) {
-		if (flags & ~RSEQ_FLAG_UNREGISTER)
-			return -EINVAL;
+	/*
+	 * Flag value 0 has the same behavior as RSEQ_FLAG_REGISTER, but cannot
+	 * be combined with other flags. This behavior is kept for backward
+	 * compatibility.
+	 */
+	if (!flags)
+		flags = RSEQ_FLAG_REGISTER;
+
+	switch (flags) {
+	case RSEQ_FLAG_UNREGISTER:
 		/* Unregister rseq for current thread. */
 		if (current->rseq != rseq || !current->rseq)
 			return -EINVAL;
@@ -324,43 +331,43 @@ SYSCALL_DEFINE4(rseq, struct rseq __user *, rseq, u32, rseq_len,
 			return ret;
 		current->rseq = NULL;
 		current->rseq_sig = 0;
-		return 0;
-	}
+		break;
+	case RSEQ_FLAG_REGISTER:
+		if (current->rseq) {
+			/*
+			 * If rseq is already registered, check whether
+			 * the provided address differs from the prior
+			 * one.
+			 */
+			if (current->rseq != rseq || rseq_len != sizeof(*rseq))
+				return -EINVAL;
+			if (current->rseq_sig != sig)
+				return -EPERM;
+			/* Already registered. */
+			return -EBUSY;
+		}
 
-	if (unlikely(flags))
-		return -EINVAL;
-
-	if (current->rseq) {
 		/*
-		 * If rseq is already registered, check whether
-		 * the provided address differs from the prior
-		 * one.
+		 * If there was no rseq previously registered,
+		 * ensure the provided rseq is properly aligned and valid.
 		 */
-		if (current->rseq != rseq || rseq_len != sizeof(*rseq))
+		if (!IS_ALIGNED((unsigned long)rseq, __alignof__(*rseq)) ||
+		    rseq_len != sizeof(*rseq))
 			return -EINVAL;
-		if (current->rseq_sig != sig)
-			return -EPERM;
-		/* Already registered. */
-		return -EBUSY;
-	}
-
-	/*
-	 * If there was no rseq previously registered,
-	 * ensure the provided rseq is properly aligned and valid.
-	 */
-	if (!IS_ALIGNED((unsigned long)rseq, __alignof__(*rseq)) ||
-	    rseq_len != sizeof(*rseq))
+		if (!access_ok(rseq, rseq_len))
+			return -EFAULT;
+		current->rseq = rseq;
+		current->rseq_sig = sig;
+		/*
+		 * If rseq was previously inactive, and has just been
+		 * registered, ensure the cpu_id_start and cpu_id fields
+		 * are updated before returning to user-space.
+		 */
+		rseq_set_notify_resume(current);
+		break;
+	default:
 		return -EINVAL;
-	if (!access_ok(rseq, rseq_len))
-		return -EFAULT;
-	current->rseq = rseq;
-	current->rseq_sig = sig;
-	/*
-	 * If rseq was previously inactive, and has just been
-	 * registered, ensure the cpu_id_start and cpu_id fields
-	 * are updated before returning to user-space.
-	 */
-	rseq_set_notify_resume(current);
+	}
 
 	return 0;
 }

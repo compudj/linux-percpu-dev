@@ -18,8 +18,16 @@ enum rseq_cpu_id_state {
 	RSEQ_CPU_ID_REGISTRATION_FAILED		= -2,
 };
 
+/*
+ * RSEQ_FLAG_UNREGISTER:       Unregister rseq ABI for caller thread.
+ * RSEQ_FLAG_REGISTER:         Register rseq ABI for caller thread.
+ *
+ * Flag value 0 has the same behavior as RSEQ_FLAG_REGISTER, but cannot be
+ * combined with other flags. This behavior is kept for backward compatibility.
+ */
 enum rseq_flags {
-	RSEQ_FLAG_UNREGISTER = (1 << 0),
+	RSEQ_FLAG_UNREGISTER			= (1 << 0),
+	RSEQ_FLAG_REGISTER			= (1 << 1),
 };
 
 enum rseq_cs_flags_bit {
