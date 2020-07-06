@@ -21,13 +21,18 @@ enum rseq_cpu_id_state {
 /*
  * RSEQ_FLAG_UNREGISTER:       Unregister rseq ABI for caller thread.
  * RSEQ_FLAG_REGISTER:         Register rseq ABI for caller thread.
+ * RSEQ_FLAG_RELIABLE_CPU_ID:  rseq provides a reliable cpu_id field.
  *
  * Flag value 0 has the same behavior as RSEQ_FLAG_REGISTER, but cannot be
  * combined with other flags. This behavior is kept for backward compatibility.
+ *
+ * The flag RSEQ_FLAG_REGISTER can be combined with the RSEQ_FLAG_RELIABLE_CPU_ID
+ * flag.
  */
 enum rseq_flags {
 	RSEQ_FLAG_UNREGISTER			= (1 << 0),
 	RSEQ_FLAG_REGISTER			= (1 << 1),
+	RSEQ_FLAG_RELIABLE_CPU_ID		= (1 << 2),
 };
 
 enum rseq_cs_flags_bit {

@@ -333,6 +333,8 @@ SYSCALL_DEFINE4(rseq, struct rseq __user *, rseq, u32, rseq_len,
 		current->rseq_sig = 0;
 		break;
 	case RSEQ_FLAG_REGISTER:
+		fallthrough;
+	case RSEQ_FLAG_REGISTER | RSEQ_FLAG_RELIABLE_CPU_ID:
 		if (current->rseq) {
 			/*
 			 * If rseq is already registered, check whether
@@ -364,6 +366,8 @@ SYSCALL_DEFINE4(rseq, struct rseq __user *, rseq, u32, rseq_len,
 		 * are updated before returning to user-space.
 		 */
 		rseq_set_notify_resume(current);
+		break;
+	case RSEQ_FLAG_RELIABLE_CPU_ID:
 		break;
 	default:
 		return -EINVAL;
