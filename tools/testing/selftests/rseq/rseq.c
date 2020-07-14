@@ -26,6 +26,7 @@
 #include <assert.h>
 #include <signal.h>
 #include <limits.h>
+#include <stddef.h>
 
 #include "rseq.h"
 
@@ -33,6 +34,8 @@
 
 __thread volatile struct rseq __rseq_abi = {
 	.cpu_id = RSEQ_CPU_ID_UNINITIALIZED,
+	.flags = RSEQ_TLS_FLAG_SIZE,
+	.user_size = offsetof(struct rseq, end),
 };
 
 /*
