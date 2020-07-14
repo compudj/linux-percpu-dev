@@ -37,6 +37,11 @@ enum rseq_cs_flags {
 		(1U << RSEQ_CS_FLAG_NO_RESTART_ON_MIGRATE_BIT),
 };
 
+/* The rseq_len expected by rseq registration is always 32 bytes. */
+enum rseq_len_expected {
+	RSEQ_LEN_EXPECTED = 32,
+};
+
 /*
  * struct rseq_cs is aligned on 4 * 8 bytes to ensure it is always
  * contained within a single cache-line. It is usually declared as
