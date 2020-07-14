@@ -37,6 +37,15 @@ enum rseq_cs_flags {
 		(1U << RSEQ_CS_FLAG_NO_RESTART_ON_MIGRATE_BIT),
 };
 
+enum rseq_tls_flags_bit {
+	/* enum rseq_cs_flags reserves bits 0-2. */
+	RSEQ_TLS_FLAG_SIZE_BIT = 3,
+};
+
+enum rseq_tls_flags {
+	RSEQ_TLS_FLAG_SIZE = (1U << RSEQ_TLS_FLAG_SIZE_BIT),
+};
+
 /* The rseq_len expected by rseq registration is always 32 bytes. */
 enum rseq_len_expected {
 	RSEQ_LEN_EXPECTED = 32,
@@ -133,8 +142,9 @@ struct rseq {
 	 *
 	 * This field should only be updated by the thread which
 	 * registered this data structure. Read by the kernel.
-	 * Mainly used for single-stepping through rseq critical sections
-	 * with debuggers.
+	 *
+	 * The RSEQ_CS flags are mainly used for single-stepping through rseq
+	 * critical sections with debuggers.
 	 *
 	 * - RSEQ_CS_FLAG_NO_RESTART_ON_PREEMPT
 	 *     Inhibit instruction sequence block restart on preemption
@@ -145,8 +155,31 @@ struct rseq {
 	 * - RSEQ_CS_FLAG_NO_RESTART_ON_MIGRATE
 	 *     Inhibit instruction sequence block restart on migration for
 	 *     this thread.
+	 *
+	 * - RSEQ_TLS_FLAG_SIZE
+	 *     Extensible struct rseq ABI. This flag should be statically
+	 *     initialized.
 	 */
 	__u32 flags;
+	/*
+	 * With __rseq_abi.flags RSEQ_TLS_FLAG_SIZE set, user_size should be
+	 * statically initialized to offsetof(struct rseq, end).
+	 */
+	__u16 user_size;
+	/*
+	 * With __rseq_abi.flags RSEQ_TLS_FLAG_SIZE set, if the kernel supports
+	 * extensible struct rseq ABI, the kernel_size field is populated by
+	 * the kernel to the minimum between user_size and the offset of the
+	 * "end" field within the struct rseq supported by the kernel on
+	 * successful registration. Should be initialized to 0.
+	 */
+	__u16 kernel_size;
+
+	/*
+	 * Very last field of the structure, to calculate size excluding padding
+	 * with offsetof().
+	 */
+	char end[];
 } __attribute__((aligned(4 * sizeof(__u64))));
 
 #endif /* _UAPI_LINUX_RSEQ_H */

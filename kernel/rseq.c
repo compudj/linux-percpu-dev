@@ -96,6 +96,7 @@ static int rseq_update_cpu_id(struct task_struct *t)
 static int rseq_reset_rseq_cpu_id(struct task_struct *t)
 {
 	u32 cpu_id_start = 0, cpu_id = RSEQ_CPU_ID_UNINITIALIZED;
+	u16 kernel_size = 0;
 
 	/*
 	 * Reset cpu_id_start to its initial state (0).
@@ -108,6 +109,11 @@ static int rseq_reset_rseq_cpu_id(struct task_struct *t)
 	 * registered again.
 	 */
 	if (put_user(cpu_id, &t->rseq->cpu_id))
+		return -EFAULT;
+	/*
+	 * Reset kernel_size to its initial state (0).
+	 */
+	if (put_user(kernel_size, &t->rseq->kernel_size))
 		return -EFAULT;
 	return 0;
 }
@@ -266,7 +272,7 @@ void __rseq_handle_notify_resume(struct ksignal *ksig, struct pt_regs *regs)
 
 	if (unlikely(t->flags & PF_EXITING))
 		return;
-	if (unlikely(!access_ok(t->rseq, sizeof(*t->rseq))))
+	if (unlikely(!access_ok(t->rseq, t->rseq_size)))
 		goto error;
 	ret = rseq_ip_fixup(regs);
 	if (unlikely(ret < 0))
@@ -294,7 +300,7 @@ void rseq_syscall(struct pt_regs *regs)
 
 	if (!t->rseq)
 		return;
-	if (!access_ok(t->rseq, sizeof(*t->rseq)) ||
+	if (!access_ok(t->rseq, t->rseq_size) ||
 	    rseq_get_rseq_cs(t, &rseq_cs) || in_rseq_cs(ip, &rseq_cs))
 		force_sig(SIGSEGV);
 }
@@ -308,6 +314,7 @@ SYSCALL_DEFINE4(rseq, struct rseq __user *, rseq, u32, rseq_len,
 		int, flags, u32, sig)
 {
 	int ret;
+	u32 tls_flags;
 
 	if (flags & RSEQ_FLAG_UNREGISTER) {
 		if (flags & ~RSEQ_FLAG_UNREGISTER)
@@ -315,7 +322,7 @@ SYSCALL_DEFINE4(rseq, struct rseq __user *, rseq, u32, rseq_len,
 		/* Unregister rseq for current thread. */
 		if (current->rseq != rseq || !current->rseq)
 			return -EINVAL;
-		if (rseq_len != sizeof(*rseq))
+		if (rseq_len != RSEQ_LEN_EXPECTED)
 			return -EINVAL;
 		if (current->rseq_sig != sig)
 			return -EPERM;
@@ -323,6 +330,7 @@ SYSCALL_DEFINE4(rseq, struct rseq __user *, rseq, u32, rseq_len,
 		if (ret)
 			return ret;
 		current->rseq = NULL;
+		current->rseq_size = 0;
 		current->rseq_sig = 0;
 		return 0;
 	}
@@ -336,7 +344,7 @@ SYSCALL_DEFINE4(rseq, struct rseq __user *, rseq, u32, rseq_len,
 		 * the provided address differs from the prior
 		 * one.
 		 */
-		if (current->rseq != rseq || rseq_len != sizeof(*rseq))
+		if (current->rseq != rseq || rseq_len != RSEQ_LEN_EXPECTED)
 			return -EINVAL;
 		if (current->rseq_sig != sig)
 			return -EPERM;
@@ -349,10 +357,32 @@ SYSCALL_DEFINE4(rseq, struct rseq __user *, rseq, u32, rseq_len,
 	 * ensure the provided rseq is properly aligned and valid.
 	 */
 	if (!IS_ALIGNED((unsigned long)rseq, __alignof__(*rseq)) ||
-	    rseq_len != sizeof(*rseq))
+	    rseq_len != RSEQ_LEN_EXPECTED)
 		return -EINVAL;
-	if (!access_ok(rseq, rseq_len))
+	if (!access_ok(rseq, RSEQ_LEN_EXPECTED))
 		return -EFAULT;
+
+	/* Handle extensible struct rseq ABI. */
+	ret = get_user(tls_flags, &rseq->flags);
+	if (ret)
+		return ret;
+	if (tls_flags & RSEQ_TLS_FLAG_SIZE) {
+		u16 user_size, kernel_size;
+
+		ret = get_user(user_size, &rseq->user_size);
+		if (ret)
+			return ret;
+		if (user_size < offsetof(struct rseq, kernel_size) + sizeof(u16))
+			return -EINVAL;
+		kernel_size = min_t(u16, user_size, offsetof(struct rseq, end));
+		ret = put_user(kernel_size, &rseq->kernel_size);
+		if (ret)
+			return ret;
+		current->rseq_size = kernel_size;
+	} else {
+		current->rseq_size = offsetof(struct rseq, user_size);
+	}
+
 	current->rseq = rseq;
 	current->rseq_sig = sig;
 	/*
