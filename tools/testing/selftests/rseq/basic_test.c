@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/time.h>
+#include <inttypes.h>
 
 #include "rseq.h"
 
@@ -35,6 +36,17 @@ void test_cpu_pointer(void)
 	sched_setaffinity(0, sizeof(affinity), &affinity);
 }
 
+static void print_rseq_size(void)
+{
+	bool supported = (__rseq_abi.flags & RSEQ_TLS_FLAG_SIZE) && __rseq_abi.kernel_size != 0;
+
+	printf("extensible struct rseq supported: %s",
+		supported ? "yes" : "no");
+	if (supported)
+		printf(" (kernel_size=%" PRIu16 ")", __rseq_abi.kernel_size);
+	printf("\n");
+}
+
 int main(int argc, char **argv)
 {
 	if (rseq_register_current_thread()) {
@@ -42,6 +54,9 @@ int main(int argc, char **argv)
 			errno, strerror(errno));
 		goto init_thread_error;
 	}
+
+	print_rseq_size();
+
 	printf("testing current cpu\n");
 	test_cpu_pointer();
 	if (rseq_unregister_current_thread()) {
