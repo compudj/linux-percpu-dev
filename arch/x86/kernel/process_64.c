@@ -670,6 +670,7 @@ long do_arch_prctl_64(struct task_struct *task, int option, unsigned long arg2)
 			task->thread.fsindex = 0;
 			x86_fsbase_write_task(task, arg2);
 		}
+		rseq_set_thread_pointer(task, arg2);
 		preempt_enable();
 		break;
 	}

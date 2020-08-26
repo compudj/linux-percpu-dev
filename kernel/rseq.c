@@ -21,6 +21,18 @@
 #define RSEQ_CS_PREEMPT_MIGRATE_FLAGS (RSEQ_CS_FLAG_NO_RESTART_ON_MIGRATE | \
 				       RSEQ_CS_FLAG_NO_RESTART_ON_PREEMPT)
 
+static struct rseq __user *rseq_get_ktls(struct task_struct *t)
+{
+	unsigned long thread_pointer;
+	long ktls_offset;
+
+	thread_pointer = t->rseq_thread_pointer;
+	ktls_offset = t->signal->rseq_ktls_offset;
+	if (!thread_pointer || !ktls_offset)
+		return NULL;
+	return (struct rseq __user *) (thread_pointer + ktls_offset);
+}
+
 /*
  *
  * Restartable sequences are a lightweight interface that allows
@@ -117,7 +129,7 @@ static int rseq_get_rseq_cs(struct task_struct *t, struct rseq_cs *rseq_cs)
 	struct rseq_cs __user *urseq_cs;
 	u64 ptr;
 	u32 __user *usig;
-	u32 sig;
+	u32 sig, ksig;
 	int ret;
 
 	if (copy_from_user(&ptr, &t->rseq->rseq_cs.ptr64, sizeof(ptr)))
@@ -149,10 +161,12 @@ static int rseq_get_rseq_cs(struct task_struct *t, struct rseq_cs *rseq_cs)
 	if (ret)
 		return ret;
 
-	if (current->rseq_sig != sig) {
+	ksig = current->signal->rseq_has_sig ?
+	       current->signal->rseq_sig : current->rseq_sig;
+	if (ksig != sig) {
 		printk_ratelimited(KERN_WARNING
 			"Possible attack attempt. Unexpected rseq signature 0x%x, expecting 0x%x (pid=%d, addr=%p).\n",
-			sig, current->rseq_sig, current->pid, usig);
+			sig, ksig, current->pid, usig);
 		return -EINVAL;
 	}
 	return 0;
@@ -266,7 +280,9 @@ void __rseq_handle_notify_resume(struct ksignal *ksig, struct pt_regs *regs)
 
 	if (unlikely(t->flags & PF_EXITING))
 		return;
-	if (unlikely(!access_ok(t->rseq, sizeof(*t->rseq))))
+	if (unlikely(!t->rseq && t->rseq_ktls))
+		t->rseq = rseq_get_ktls(t);
+	if (unlikely(!access_ok(t->rseq, offsetofend(struct rseq, flags))))
 		goto error;
 	ret = rseq_ip_fixup(regs);
 	if (unlikely(ret < 0))
@@ -292,44 +308,19 @@ void rseq_syscall(struct pt_regs *regs)
 	struct task_struct *t = current;
 	struct rseq_cs rseq_cs;
 
-	if (!t->rseq)
-		return;
-	if (!access_ok(t->rseq, sizeof(*t->rseq)) ||
-	    rseq_get_rseq_cs(t, &rseq_cs) || in_rseq_cs(ip, &rseq_cs))
-		force_sig(SIGSEGV);
+	if (!t->rseq && t->rseq_ktls)
+		t->rseq = rseq_get_ktls(t);
+	if (t->rseq) {
+		if (!access_ok(t->rseq, sizeof(*t->rseq)) ||
+		    rseq_get_rseq_cs(t, &rseq_cs) || in_rseq_cs(ip, &rseq_cs))
+			force_sig(SIGSEGV);
+	}
 }
 
 #endif
 
-/*
- * sys_rseq - setup restartable sequences for caller thread.
- */
-SYSCALL_DEFINE4(rseq, struct rseq __user *, rseq, u32, rseq_len,
-		int, flags, u32, sig)
+static int rseq_register(struct rseq __user *rseq, u32 rseq_len, u32 sig)
 {
-	int ret;
-
-	if (flags & RSEQ_FLAG_UNREGISTER) {
-		if (flags & ~RSEQ_FLAG_UNREGISTER)
-			return -EINVAL;
-		/* Unregister rseq for current thread. */
-		if (current->rseq != rseq || !current->rseq)
-			return -EINVAL;
-		if (rseq_len != sizeof(*rseq))
-			return -EINVAL;
-		if (current->rseq_sig != sig)
-			return -EPERM;
-		ret = rseq_reset_rseq_cpu_id(current);
-		if (ret)
-			return ret;
-		current->rseq = NULL;
-		current->rseq_sig = 0;
-		return 0;
-	}
-
-	if (unlikely(flags))
-		return -EINVAL;
-
 	if (current->rseq) {
 		/*
 		 * If rseq is already registered, check whether
@@ -353,6 +344,7 @@ SYSCALL_DEFINE4(rseq, struct rseq __user *, rseq, u32, rseq_len,
 		return -EINVAL;
 	if (!access_ok(rseq, rseq_len))
 		return -EFAULT;
+
 	current->rseq = rseq;
 	current->rseq_sig = sig;
 	/*
@@ -363,4 +355,115 @@ SYSCALL_DEFINE4(rseq, struct rseq __user *, rseq, u32, rseq_len,
 	rseq_set_notify_resume(current);
 
 	return 0;
+}
+
+static int rseq_unregister(struct rseq __user *rseq, u32 rseq_len, u32 sig)
+{
+	int ret;
+
+	/* Unregister rseq for current thread. */
+	if (current->rseq != rseq || !current->rseq)
+		return -EINVAL;
+	if (rseq_len != sizeof(*rseq))
+		return -EINVAL;
+	if (current->rseq_sig != sig)
+		return -EPERM;
+	ret = rseq_reset_rseq_cpu_id(current);
+	if (ret)
+		return ret;
+	current->rseq = NULL;
+	current->rseq_sig = 0;
+	return 0;
+}
+
+static int rseq_get_ktls_layout(struct rseq_ktls_layout __user *ktls_layout)
+{
+	u32 size, alignment;
+	u64 offset;
+
+	size = offsetofend(struct rseq, flags);
+	alignment = __alignof__(struct rseq);
+	offset = (u64) current->signal->rseq_ktls_offset;
+
+	if (put_user(size, &ktls_layout->size))
+		return -EFAULT;
+	if (put_user(alignment, &ktls_layout->alignment))
+		return -EFAULT;
+	if (put_user(offset, &ktls_layout->offset))
+		return -EFAULT;
+	return 0;
+}
+
+static int rseq_set_ktls_offset(struct rseq_ktls_offset __user *ktls_offset)
+{
+	s64 offset;
+	int ret = 0;
+
+	if (get_user(offset, &ktls_offset->offset))
+		return -EFAULT;
+	/*
+	 * TODO: do we want to return EINVAL if a compat syscall provides
+	 * an offset larger than INT_MAX/smaller than INT_MIN on a 64-bit kernel ?
+	 */
+	if (offset > LONG_MAX || offset < LONG_MIN)
+		return -EINVAL;
+	/* Only allow setting ktls offset when single-threaded. */
+	if (get_nr_threads(current) != 1)
+		return -EBUSY;
+	if (current->signal->rseq_ktls_offset)
+		return -EBUSY;
+	current->signal->rseq_ktls_offset = (long) offset;
+	current->rseq_ktls = true;
+	/*
+	 * If rseq was previously inactive, and has just been
+	 * registered, ensure the cpu_id_start and cpu_id fields
+	 * are updated before returning to user-space.
+	 */
+	rseq_set_notify_resume(current);
+
+	return ret;
+}
+
+static int rseq_set_sig(u32 sig)
+{
+	/* Only allow setting signature when single-threaded. */
+	if (get_nr_threads(current) != 1)
+		return -EBUSY;
+	if (current->signal->rseq_has_sig)
+		return -EPERM;
+	current->signal->rseq_sig = sig;
+	current->signal->rseq_has_sig = true;
+	return 0;
+}
+
+static int rseq_set_ktls_thread(void)
+{
+	if (!rseq_get_ktls(current))
+		return -EFAULT;
+	current->rseq_ktls = true;
+	return 0;
+}
+
+/*
+ * sys_rseq - setup restartable sequences for caller thread.
+ */
+SYSCALL_DEFINE4(rseq, void __user *, uptr, u32, rseq_len,
+		int, flags, u32, sig)
+{
+	switch (flags) {
+	case 0:
+		return rseq_register((struct rseq __user *) uptr, rseq_len, sig);
+	case RSEQ_FLAG_UNREGISTER:
+		return rseq_unregister((struct rseq __user *) uptr, rseq_len, sig);
+	case RSEQ_FLAG_GET_KTLS_LAYOUT:
+		return rseq_get_ktls_layout((struct rseq_ktls_layout __user *) uptr);
+	case RSEQ_FLAG_SET_KTLS_OFFSET:
+		return rseq_set_ktls_offset((struct rseq_ktls_offset __user *) uptr);
+	case RSEQ_FLAG_SET_SIG:
+		return rseq_set_sig(sig);
+	case RSEQ_FLAG_SET_KTLS_THREAD:
+		return rseq_set_ktls_thread();
+	default:
+		return -EINVAL;
+	}
 }

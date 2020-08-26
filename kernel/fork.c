@@ -1604,6 +1604,12 @@ static int copy_signal(unsigned long clone_flags, struct task_struct *tsk)
 	sig->oom_score_adj = current->signal->oom_score_adj;
 	sig->oom_score_adj_min = current->signal->oom_score_adj_min;
 
+#ifdef CONFIG_RSEQ
+	sig->rseq_ktls_offset = current->signal->rseq_ktls_offset;
+	sig->rseq_has_sig = current->signal->rseq_has_sig;
+	sig->rseq_sig = current->signal->rseq_sig;
+#endif
+
 	mutex_init(&sig->cred_guard_mutex);
 	mutex_init(&sig->exec_update_mutex);
 
@@ -2237,7 +2243,7 @@ static __latent_entropy struct task_struct *copy_process(
 	 */
 	copy_seccomp(p);
 
-	rseq_fork(p, clone_flags);
+	rseq_fork(p, clone_flags, args->tls);
 
 	/* Don't start children in a dying pid namespace */
 	if (unlikely(!(ns_of_pid(pid)->pid_allocated & PIDNS_ADDING))) {
@@ -2712,7 +2718,7 @@ static bool clone3_args_valid(struct kernel_clone_args *kargs)
 {
 	/* Verify that no unknown flags are passed along. */
 	if (kargs->flags &
-	    ~(CLONE_LEGACY_FLAGS | CLONE_CLEAR_SIGHAND | CLONE_INTO_CGROUP))
+	    ~(CLONE_LEGACY_FLAGS | CLONE_CLEAR_SIGHAND | CLONE_INTO_CGROUP | CLONE_RSEQ_KTLS))
 		return false;
 
 	/*
@@ -2728,6 +2734,10 @@ static bool clone3_args_valid(struct kernel_clone_args *kargs)
 
 	if ((kargs->flags & (CLONE_THREAD | CLONE_PARENT)) &&
 	    kargs->exit_signal)
+		return false;
+
+	if ((kargs->flags & CLONE_RSEQ_KTLS) &&
+	    (!(kargs->flags & CLONE_THREAD) || !(kargs->flags & CLONE_SETTLS)))
 		return false;
 
 	if (!clone3_stack_valid(kargs))

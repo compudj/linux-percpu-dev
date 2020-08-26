@@ -18,8 +18,22 @@ enum rseq_cpu_id_state {
 	RSEQ_CPU_ID_REGISTRATION_FAILED		= -2,
 };
 
+struct rseq_ktls_layout {
+	__u32 size;
+	__u32 alignment;
+	__u64 offset;	/* 0 if not set. */
+};
+
+struct rseq_ktls_offset {
+	__s64 offset;
+};
+
 enum rseq_flags {
-	RSEQ_FLAG_UNREGISTER = (1 << 0),
+	RSEQ_FLAG_UNREGISTER		= (1 << 0),
+	RSEQ_FLAG_GET_KTLS_LAYOUT	= (1 << 1),	/* Get ktls size, alignment, offset from thread pointer (if set). */
+	RSEQ_FLAG_SET_KTLS_OFFSET	= (1 << 2),	/* Set ktls offset from thread pointer for process. */
+	RSEQ_FLAG_SET_SIG		= (1 << 3),	/* Set rseq signature for process. */
+	RSEQ_FLAG_SET_KTLS_THREAD	= (1 << 4),	/* Set ktls enabled for thread (same as done by CLONE_RSEQ_KTLS). */
 };
 
 enum rseq_cs_flags_bit {
