@@ -28,6 +28,14 @@
 
 #ifdef __x86_64__
 
+static inline void *rseq_get_thread_pointer(void)
+{
+	void *p;
+
+	asm ("mov %%fs:0, %0" : "=r" (p));
+	return p;
+}
+
 #define rseq_smp_mb()	\
 	__asm__ __volatile__ ("lock; addl $0,-128(%%rsp)" ::: "memory", "cc")
 #define rseq_smp_rmb()	rseq_barrier()

@@ -31,7 +31,7 @@
 
 #define ARRAY_SIZE(arr)	(sizeof(arr) / sizeof((arr)[0]))
 
-__thread volatile struct rseq __rseq_abi = {
+__thread struct rseq __rseq_abi = {
 	.cpu_id = RSEQ_CPU_ID_UNINITIALIZED,
 };
 
@@ -47,83 +47,26 @@ static int rseq_ownership;
 
 static __thread volatile uint32_t __rseq_refcount;
 
-static void signal_off_save(sigset_t *oldset)
-{
-	sigset_t set;
-	int ret;
-
-	sigfillset(&set);
-	ret = pthread_sigmask(SIG_BLOCK, &set, oldset);
-	if (ret)
-		abort();
-}
-
-static void signal_restore(sigset_t oldset)
-{
-	int ret;
-
-	ret = pthread_sigmask(SIG_SETMASK, &oldset, NULL);
-	if (ret)
-		abort();
-}
-
-static int sys_rseq(volatile struct rseq *rseq_abi, uint32_t rseq_len,
+static int sys_rseq(void *ptr, uint32_t rseq_len,
 		    int flags, uint32_t sig)
 {
-	return syscall(__NR_rseq, rseq_abi, rseq_len, flags, sig);
+	return syscall(__NR_rseq, ptr, rseq_len, flags, sig);
 }
 
 int rseq_register_current_thread(void)
 {
-	int rc, ret = 0;
-	sigset_t oldset;
+	int rc;
 
-	if (!rseq_ownership)
-		return 0;
-	signal_off_save(&oldset);
-	if (__rseq_refcount == UINT_MAX) {
-		ret = -1;
-		goto end;
+	rc = sys_rseq(NULL, 0, RSEQ_FLAG_SET_KTLS_THREAD, 0);
+	if (rc) {
+		abort();
 	}
-	if (__rseq_refcount++)
-		goto end;
-	rc = sys_rseq(&__rseq_abi, sizeof(struct rseq), 0, RSEQ_SIG);
-	if (!rc) {
-		assert(rseq_current_cpu_raw() >= 0);
-		goto end;
-	}
-	if (errno != EBUSY)
-		__rseq_abi.cpu_id = RSEQ_CPU_ID_REGISTRATION_FAILED;
-	ret = -1;
-	__rseq_refcount--;
-end:
-	signal_restore(oldset);
-	return ret;
+	return 0;
 }
 
 int rseq_unregister_current_thread(void)
 {
-	int rc, ret = 0;
-	sigset_t oldset;
-
-	if (!rseq_ownership)
-		return 0;
-	signal_off_save(&oldset);
-	if (!__rseq_refcount) {
-		ret = -1;
-		goto end;
-	}
-	if (--__rseq_refcount)
-		goto end;
-	rc = sys_rseq(&__rseq_abi, sizeof(struct rseq),
-		      RSEQ_FLAG_UNREGISTER, RSEQ_SIG);
-	if (!rc)
-		goto end;
-	__rseq_refcount = 1;
-	ret = -1;
-end:
-	signal_restore(oldset);
-	return ret;
+	return 0;
 }
 
 int32_t rseq_fallback_current_cpu(void)
@@ -140,11 +83,37 @@ int32_t rseq_fallback_current_cpu(void)
 
 void __attribute__((constructor)) rseq_init(void)
 {
+	int rc;
+	long rseq_abi_offset;
+	struct rseq_ktls_layout layout;
+	struct rseq_ktls_offset offset;
+
 	/* Check whether rseq is handled by another library. */
 	if (__rseq_handled)
 		return;
 	__rseq_handled = 1;
 	rseq_ownership = 1;
+
+	rseq_abi_offset = (long) &__rseq_abi - (long) rseq_get_thread_pointer();
+
+	rc = sys_rseq(&layout, 0, RSEQ_FLAG_GET_KTLS_LAYOUT, 0);
+	if (rc) {
+		abort();
+	}
+	if (layout.size > sizeof(struct rseq) || layout.alignment > __alignof__(struct rseq)) {
+		abort();
+	}
+	offset.offset = rseq_abi_offset;
+	rc = sys_rseq(&offset, 0, RSEQ_FLAG_SET_KTLS_OFFSET, 0);
+	if (rc) {
+		abort();
+	}
+	rc = sys_rseq(NULL, 0, RSEQ_FLAG_SET_SIG, RSEQ_SIG);
+	if (rc) {
+		abort();
+	}
+
+	assert(rseq_current_cpu_raw() >= 0);
 }
 
 void __attribute__((destructor)) rseq_fini(void)
