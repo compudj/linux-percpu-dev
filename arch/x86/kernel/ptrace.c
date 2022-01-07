@@ -1368,3 +1368,31 @@ void user_single_step_report(struct pt_regs *regs)
 {
 	send_sigtrap(regs, 0, TRAP_BRKPT);
 }
+
+#ifdef CONFIG_RSEQ
+int rseq_abort_at_ip(struct pt_regs *regs, unsigned long ip)
+{
+	if (user_64bit_mode(regs)) {
+		/*
+		 * rseq abort-at-ip x86-64 ABI: stack pointer is decremented to
+		 * skip the redzone (128 bytes on x86-64), and decremented of
+		 * the pointer size (8 bytes).  The aborted address (abort-at-ip)
+		 * is stored at this updated stack pointer location (top of stack).
+		 *
+		 * Skipping the redzone is needed to make sure not to corrupt
+		 * stack data when the rseq critical section is within a leaf
+		 * function.
+		 */
+		regs->sp -= sizeof(u64) + 128;
+		return put_user(ip, (u64 __user *)regs->sp);
+	} else {
+		/*
+		 * rseq abort-at-ip x86-32 ABI: stack pointer is decremented of
+		 * the pointer size (4 bytes).  The aborted address (abort-at-ip)
+		 * is stored at this updated stack pointer location (top of stack).
+		 */
+		regs->sp -= sizeof(u32);
+		return put_user(ip, (u32 __user *)regs->sp);
+	}
+}
+#endif
